@@ -19,6 +19,13 @@ DEFAULT_CONFIG = {
         {"relay_id": 1, "enabled": True, "on_time": "08:00", "off_time": "22:00"},
         {"relay_id": 2, "enabled": True, "on_time": "08:00", "off_time": "22:00"},
     ],
+    "sensors": {
+        "enabled":              True,
+        "i2c_bus":              2,
+        "read_interval_seconds": 30,
+        "soil_dry":             [26000, 26000],
+        "soil_wet":             [13000, 13000],
+    },
 }
 
 

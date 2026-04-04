@@ -48,6 +48,59 @@ function showToast(msg, type = 'ok') {
 }
 
 // =========================================================================
+// Sensors
+// =========================================================================
+async function pollSensors() {
+  try {
+    const res = await apiFetch('/api/sensors');
+    const card = document.getElementById('sensor-card');
+    if (!res.available) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    renderSensorMetrics(res.data);
+  } catch { /* silent */ }
+}
+
+function renderSensorMetrics(d) {
+  const grid = document.getElementById('sensor-metrics');
+  grid.innerHTML = '';
+
+  const tile = (icon, label, value) => {
+    const el = document.createElement('div');
+    el.className = 'metric-tile';
+    el.innerHTML = `<div class="metric-icon">${icon}</div>
+                    <div class="metric-value">${value}</div>
+                    <div class="metric-label">${label}</div>`;
+    return el;
+  };
+
+  if (d.temperature  != null) grid.appendChild(tile('🌡', 'Температура',    `${d.temperature} °C`));
+  if (d.air_humidity != null) grid.appendChild(tile('💧', 'Влажность возд.', `${d.air_humidity} %`));
+  if (d.eco2_ppm     != null) grid.appendChild(tile('💨', 'CO₂',            `${d.eco2_ppm} ppm`));
+  if (d.tvoc_ppb     != null) grid.appendChild(tile('🏭', 'TVOC',           `${d.tvoc_ppb} ppb`));
+  if (d.aqi          != null) {
+    const labels = ['', 'Отлично', 'Хорошо', 'Умеренно', 'Плохо', 'Опасно'];
+    grid.appendChild(tile('🌿', 'AQI', `${d.aqi} — ${labels[d.aqi] ?? '?'}`));
+  }
+
+  if (Array.isArray(d.soil)) {
+    d.soil.forEach(s => {
+      const pct = s.moisture_pct;
+      const bar = `<div class="soil-bar"><div class="soil-fill" style="width:${pct}%"></div></div>`;
+      const el  = document.createElement('div');
+      el.className = 'metric-tile metric-tile--wide';
+      el.innerHTML = `<div class="metric-icon">🪴</div>
+                      <div class="metric-value">${pct} %</div>
+                      <div class="metric-label">Почва A${s.channel}</div>
+                      ${bar}`;
+      grid.appendChild(el);
+    });
+  }
+}
+
+setInterval(pollSensors, 15000);
+pollSensors();
+
+// =========================================================================
 // Status polling
 // =========================================================================
 async function pollStatus() {
@@ -275,6 +328,16 @@ async function loadSettings() {
     document.getElementById('s-tl-interval').value    = s.timelapse_interval_minutes ?? 30;
     document.getElementById('s-cam-device').value     = s.camera_device ?? 0;
     document.getElementById('s-gpio-chip').value      = s.gpio_chip ?? 'gpiochip0';
+    const sc = s.sensors ?? {};
+    document.getElementById('s-sens-enabled').checked  = sc.enabled ?? true;
+    document.getElementById('s-sens-bus').value         = sc.i2c_bus ?? 2;
+    document.getElementById('s-sens-interval').value   = sc.read_interval_seconds ?? 30;
+    const dry = sc.soil_dry ?? [26000, 26000];
+    const wet = sc.soil_wet ?? [13000, 13000];
+    document.getElementById('s-soil0-dry').value = dry[0];
+    document.getElementById('s-soil0-wet').value = wet[0];
+    document.getElementById('s-soil1-dry').value = dry[1];
+    document.getElementById('s-soil1-wet').value = wet[1];
     renderRelaySettings(s.relays ?? []);
   } catch {
     showToast('Ошибка загрузки настроек', 'err');
@@ -338,6 +401,15 @@ async function saveSettings() {
     timelapse_interval_minutes: +document.getElementById('s-tl-interval').value,
     camera_device:              +document.getElementById('s-cam-device').value,
     gpio_chip:                  document.getElementById('s-gpio-chip').value.trim(),
+    sensors: {
+      enabled:               document.getElementById('s-sens-enabled').checked,
+      i2c_bus:               +document.getElementById('s-sens-bus').value,
+      read_interval_seconds: +document.getElementById('s-sens-interval').value,
+      soil_dry: [+document.getElementById('s-soil0-dry').value,
+                 +document.getElementById('s-soil1-dry').value],
+      soil_wet: [+document.getElementById('s-soil0-wet').value,
+                 +document.getElementById('s-soil1-wet').value],
+    },
   };
   try {
     await apiFetch('/api/settings', { method: 'POST', body: JSON.stringify(payload) });

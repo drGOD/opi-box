@@ -348,6 +348,47 @@ input:focus { border-color: var(--accent); }
 
 /* ── Responsive ──────────────────────────────────────────────────────── */
 
+/* ── Sensor metrics ──────────────────────────────────────────────────────── */
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.metric-tile {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 10px 12px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.metric-tile--wide { grid-column: span 2; }
+
+.metric-icon  { font-size: 1.6rem; line-height: 1; }
+.metric-value { font-size: 1.1rem; font-weight: 700; color: var(--accent); }
+.metric-label { font-size: .72rem; color: var(--text2); }
+
+.soil-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+.soil-fill {
+  height: 100%;
+  background: var(--accent2);
+  border-radius: 3px;
+  transition: width .4s;
+}
+
 /* ── Footer ──────────────────────────────────────────────────────────── */
 
 .app-footer {

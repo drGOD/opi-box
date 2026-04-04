@@ -10,6 +10,7 @@ from camera import Camera, TIMELAPSE_DIR
 from config import load_config, save_config
 from relay import Relay
 from scheduler import GrowboxScheduler
+from sensors import SensorHub
 from telegram_bot import TelegramNotifier
 
 logging.basicConfig(
@@ -44,6 +45,9 @@ notifier = TelegramNotifier(
     token=config.get("telegram_token", ""),
     chat_id=config.get("telegram_chat_id", ""),
 )
+
+sensor_hub = SensorHub(config)
+sensor_hub.start()
 
 scheduler = GrowboxScheduler(relays, camera, notifier, config)
 scheduler.start()
@@ -162,6 +166,7 @@ def get_settings():
         "timelapse_interval_minutes": cfg.get("timelapse_interval_minutes", 30),
         "camera_device": cfg.get("camera_device", 0),
         "gpio_chip": cfg.get("gpio_chip", "gpiochip0"),
+        "sensors": cfg.get("sensors", {}),
         "relays": [
             {"id": r["id"], "name": r["name"], "gpio_pin": r["gpio_pin"],
              "active_low": r.get("active_low", True)}
@@ -182,12 +187,23 @@ def update_settings():
     for key in allowed:
         if key in data:
             cfg[key] = data[key]
+    if "sensors" in data and isinstance(data["sensors"], dict):
+        cfg.setdefault("sensors", {}).update(data["sensors"])
     save_config(cfg)
     config.update(cfg)
-    notifier.token = cfg["telegram_token"]
+    notifier.token   = cfg["telegram_token"]
     notifier.chat_id = cfg["telegram_chat_id"]
     scheduler.config = cfg
     return jsonify({"ok": True})
+
+
+@app.route("/api/sensors")
+def get_sensors():
+    data = sensor_hub.latest
+    return jsonify({
+        "available": sensor_hub.available,
+        "data": data or {},
+    })
 
 
 @app.route("/api/relays", methods=["POST"])
