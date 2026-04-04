@@ -207,6 +207,9 @@ def update_relays():
     save_config(cfg)
     config.update(cfg)
     # Reinitialize relay objects with new settings
+    # Release old GPIO lines first to avoid EBUSY
+    for old in relays.values():
+        old.close()
     for r in cfg["relays"]:
         old = relays.get(r["id"])
         new_rel = Relay(

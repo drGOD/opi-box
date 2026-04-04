@@ -71,9 +71,13 @@ class Relay:
             "mock": self._mock,
         }
 
-    def __del__(self):
+    def close(self) -> None:
         if self._request:
             try:
                 self._request.release()
             except Exception:
                 pass
+            self._request = None
+
+    def __del__(self):
+        self.close()
