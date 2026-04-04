@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GrowBox</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head>
 <body>
 
@@ -30,6 +32,19 @@
 
   <!-- ===== DASHBOARD ===== -->
   <section id="tab-dashboard" class="tab-content active">
+
+    <!-- Manual mode banner -->
+    <div id="manual-banner" class="manual-banner" style="display:none">
+      <div class="manual-banner-body">
+        <span class="manual-banner-icon">⚠️</span>
+        <div>
+          <strong>Ручной режим</strong>
+          <div id="manual-banner-desc" class="manual-banner-desc"></div>
+        </div>
+      </div>
+      <button class="btn btn-sm" onclick="enableAutoMode()">Вернуть автоматический</button>
+    </div>
+
     <div class="dash-grid">
 
       <!-- Relay cards (filled dynamically) -->
@@ -39,6 +54,37 @@
       <div id="sensor-card" class="card" style="display:none">
         <div class="card-title">Датчики</div>
         <div id="sensor-metrics" class="metric-grid"></div>
+      </div>
+
+      <!-- Charts -->
+      <div id="charts-card" class="card" style="display:none">
+        <div class="card-title">
+          История
+          <div class="chart-range">
+            <button class="chart-range-btn" data-h="1">1ч</button>
+            <button class="chart-range-btn" data-h="6">6ч</button>
+            <button class="chart-range-btn active" data-h="24">24ч</button>
+            <button class="chart-range-btn" data-h="168">7д</button>
+          </div>
+        </div>
+        <div class="chart-grid">
+          <div class="chart-wrap">
+            <div class="chart-label">Температура / Влажность воздуха</div>
+            <canvas id="chart-air"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-label">CO₂ / TVOC</div>
+            <canvas id="chart-aq"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-label">Влажность почвы</div>
+            <canvas id="chart-soil"></canvas>
+          </div>
+          <div class="chart-wrap">
+            <div class="chart-label">Состояние реле</div>
+            <canvas id="chart-relays"></canvas>
+          </div>
+        </div>
       </div>
 
       <!-- Camera snapshot -->
@@ -83,8 +129,6 @@
         Снимки пока не сохранены. Они появятся после первого срабатывания таймлапса.
       </div>
     </div>
-
-    <!-- Lightbox -->
     <div id="lightbox" class="lightbox" onclick="closeLightbox()">
       <img id="lightbox-img" src="" alt="">
       <button class="lightbox-close" onclick="closeLightbox()">✕</button>
@@ -105,6 +149,7 @@
 
   <!-- ===== SETTINGS ===== -->
   <section id="tab-settings" class="tab-content">
+
     <div class="card">
       <div class="card-title">Telegram</div>
       <div class="form-group">
@@ -209,6 +254,7 @@
         <button class="btn" onclick="saveSettings()">Сохранить</button>
       </div>
     </div>
+
   </section>
 
 </main>

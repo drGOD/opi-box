@@ -104,11 +104,13 @@ class SensorHub:
     """
     Manages all sensors and polls them in a background daemon thread.
     Holds a reference to the shared config dict — picks up live changes.
+    on_reading(data) is called after each successful read (e.g. to write to DB).
     """
 
-    def __init__(self, config: dict):
-        self._config  = config
-        self._lock    = threading.Lock()
+    def __init__(self, config: dict, on_reading=None):
+        self._config     = config
+        self._on_reading = on_reading
+        self._lock       = threading.Lock()
         self._data: dict | None = None
         self._running = False
         self._thread  = None
@@ -217,6 +219,12 @@ class SensorHub:
 
         with self._lock:
             self._data = data
+
+        if self._on_reading and data:
+            try:
+                self._on_reading(data)
+            except Exception as exc:
+                logger.error("on_reading callback error: %s", exc)
 
     @property
     def latest(self) -> dict | None:

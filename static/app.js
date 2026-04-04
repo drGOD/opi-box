@@ -3,7 +3,12 @@
 // =========================================================================
 // State
 // =========================================================================
-let statusData = null;
+let statusData     = null;
+let scheduleData   = [];
+let relaySettingsData = [];
+let chartHours     = 24;
+let charts         = {};
+let chartsInited   = false;
 
 // =========================================================================
 // Tab navigation
@@ -15,11 +20,10 @@ document.querySelectorAll('.tab').forEach(btn => {
     btn.classList.add('active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
 
-    // Lazy-load data per tab
     if (btn.dataset.tab === 'timelapse') loadTimelapse();
     if (btn.dataset.tab === 'schedule')  loadSchedule();
     if (btn.dataset.tab === 'settings')  loadSettings();
-    if (btn.dataset.tab === 'camera')    stopStream(); // reset stream on enter
+    if (btn.dataset.tab === 'camera')    stopStream();
   });
 });
 
@@ -48,6 +52,64 @@ function showToast(msg, type = 'ok') {
 }
 
 // =========================================================================
+// Status polling
+// =========================================================================
+async function pollStatus() {
+  try {
+    statusData = await apiFetch('/api/status');
+    renderRelayCards(statusData.relays);
+    renderAutoModeBanner(statusData);
+    document.getElementById('system-time').textContent = statusData.time;
+    const dot = document.getElementById('conn-dot');
+    dot.className = 'dot dot-on';
+    dot.title = 'Онлайн';
+  } catch {
+    const dot = document.getElementById('conn-dot');
+    dot.className = 'dot dot-off';
+    dot.title = 'Нет соединения';
+  }
+}
+
+setInterval(pollStatus, 3000);
+pollStatus();
+
+apiFetch('/api/version').then(v => {
+  const el = document.getElementById('footer-version');
+  if (el) el.textContent = v.commit;
+}).catch(() => {});
+
+// =========================================================================
+// Auto mode banner
+// =========================================================================
+function renderAutoModeBanner(status) {
+  const banner = document.getElementById('manual-banner');
+  if (status.auto_mode) {
+    banner.style.display = 'none';
+    return;
+  }
+  banner.style.display = '';
+  const parts = [];
+  (status.relays || []).forEach(r => {
+    const exp = r.schedule_expected;
+    if (exp != null && r.state !== exp) {
+      parts.push(`${r.name}: по расписанию ${exp ? 'ВКЛ' : 'ВЫКЛ'}, сейчас ${r.state ? 'ВКЛ' : 'ВЫКЛ'}`);
+    }
+  });
+  document.getElementById('manual-banner-desc').textContent =
+    parts.length ? parts.join(' · ') : 'Реле управляются вручную';
+}
+
+async function enableAutoMode() {
+  try {
+    await apiFetch('/api/auto_mode', { method: 'POST', body: '{}' });
+    showToast('Автоматический режим включён');
+    await pollStatus();
+  } catch {
+    showToast('Ошибка', 'err');
+  }
+}
+
+// =========================================================================
 // Sensors
 // =========================================================================
 async function pollSensors() {
@@ -73,15 +135,14 @@ function renderSensorMetrics(d) {
     return el;
   };
 
-  if (d.temperature  != null) grid.appendChild(tile('🌡', 'Температура',    `${d.temperature} °C`));
-  if (d.air_humidity != null) grid.appendChild(tile('💧', 'Влажность возд.', `${d.air_humidity} %`));
-  if (d.eco2_ppm     != null) grid.appendChild(tile('💨', 'CO₂',            `${d.eco2_ppm} ppm`));
-  if (d.tvoc_ppb     != null) grid.appendChild(tile('🏭', 'TVOC',           `${d.tvoc_ppb} ppb`));
+  if (d.temperature  != null) grid.appendChild(tile('🌡', 'Температура',     `${d.temperature} °C`));
+  if (d.air_humidity != null) grid.appendChild(tile('💧', 'Влажность возд.',  `${d.air_humidity} %`));
+  if (d.eco2_ppm     != null) grid.appendChild(tile('💨', 'CO₂',             `${d.eco2_ppm} ppm`));
+  if (d.tvoc_ppb     != null) grid.appendChild(tile('🏭', 'TVOC',            `${d.tvoc_ppb} ppb`));
   if (d.aqi          != null) {
     const labels = ['', 'Отлично', 'Хорошо', 'Умеренно', 'Плохо', 'Опасно'];
     grid.appendChild(tile('🌿', 'AQI', `${d.aqi} — ${labels[d.aqi] ?? '?'}`));
   }
-
   if (Array.isArray(d.soil)) {
     d.soil.forEach(s => {
       const pct = s.moisture_pct;
@@ -90,8 +151,7 @@ function renderSensorMetrics(d) {
       el.className = 'metric-tile metric-tile--wide';
       el.innerHTML = `<div class="metric-icon">🪴</div>
                       <div class="metric-value">${pct} %</div>
-                      <div class="metric-label">Почва A${s.channel}</div>
-                      ${bar}`;
+                      <div class="metric-label">Почва A${s.channel}</div>${bar}`;
       grid.appendChild(el);
     });
   }
@@ -101,31 +161,162 @@ setInterval(pollSensors, 15000);
 pollSensors();
 
 // =========================================================================
-// Status polling
+// Charts
 // =========================================================================
-async function pollStatus() {
+const CHART_DEFAULTS = {
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: false,
+  plugins: {
+    legend: { labels: { color: '#e2e8f0', font: { size: 11 }, boxWidth: 14 } },
+    tooltip: { mode: 'index', intersect: false },
+  },
+  scales: {
+    x: {
+      type: 'time',
+      time: { displayFormats: { minute: 'HH:mm', hour: 'HH:mm', day: 'dd.MM' } },
+      ticks: { color: '#94a3b8', maxTicksLimit: 8, maxRotation: 0 },
+      grid:  { color: '#2d3148' },
+    },
+  },
+};
+
+function yScale(color, position = 'left', opts = {}) {
+  return {
+    position,
+    ticks: { color, maxTicksLimit: 6 },
+    grid: position === 'left' ? { color: '#2d3148' } : { drawOnChartArea: false },
+    ...opts,
+  };
+}
+
+function initCharts() {
+  if (chartsInited) return;
+  chartsInited = true;
+
+  // Air: temperature + humidity
+  charts.air = new Chart(document.getElementById('chart-air'), {
+    type: 'line',
+    data: { datasets: [
+      { label: 'Темп. °C',    data: [], borderColor: '#f97316', backgroundColor: 'transparent',
+        yAxisID: 'y',  tension: 0.3, pointRadius: 0, borderWidth: 2 },
+      { label: 'Влажн. возд. %', data: [], borderColor: '#38bdf8', backgroundColor: 'transparent',
+        yAxisID: 'y2', tension: 0.3, pointRadius: 0, borderWidth: 2 },
+    ]},
+    options: { ...CHART_DEFAULTS, scales: { x: CHART_DEFAULTS.scales.x,
+      y:  yScale('#f97316', 'left'),
+      y2: yScale('#38bdf8', 'right'),
+    }},
+  });
+
+  // Air quality: CO₂ + TVOC
+  charts.aq = new Chart(document.getElementById('chart-aq'), {
+    type: 'line',
+    data: { datasets: [
+      { label: 'CO₂ ppm',  data: [], borderColor: '#4ade80', backgroundColor: 'transparent',
+        yAxisID: 'y',  tension: 0.3, pointRadius: 0, borderWidth: 2 },
+      { label: 'TVOC ppb', data: [], borderColor: '#c084fc', backgroundColor: 'transparent',
+        yAxisID: 'y2', tension: 0.3, pointRadius: 0, borderWidth: 2 },
+    ]},
+    options: { ...CHART_DEFAULTS, scales: { x: CHART_DEFAULTS.scales.x,
+      y:  yScale('#4ade80', 'left'),
+      y2: yScale('#c084fc', 'right'),
+    }},
+  });
+
+  // Soil moisture
+  charts.soil = new Chart(document.getElementById('chart-soil'), {
+    type: 'line',
+    data: { datasets: [
+      { label: 'Почва A0 %', data: [], borderColor: '#86efac',
+        backgroundColor: 'rgba(134,239,172,0.08)', fill: true,
+        tension: 0.3, pointRadius: 0, borderWidth: 2 },
+      { label: 'Почва A1 %', data: [], borderColor: '#22d3ee',
+        backgroundColor: 'rgba(34,211,238,0.08)', fill: true,
+        tension: 0.3, pointRadius: 0, borderWidth: 2 },
+    ]},
+    options: { ...CHART_DEFAULTS, scales: { x: CHART_DEFAULTS.scales.x,
+      y: { ...yScale('#94a3b8', 'left'), min: 0, max: 100 },
+    }},
+  });
+
+  // Relay states (step lines)
+  charts.relays = new Chart(document.getElementById('chart-relays'), {
+    type: 'line',
+    data: { datasets: [
+      { label: 'Реле 1', data: [], borderColor: '#fbbf24',
+        backgroundColor: 'rgba(251,191,36,0.08)', fill: true,
+        stepped: true, pointRadius: 0, borderWidth: 2 },
+      { label: 'Реле 2', data: [], borderColor: '#60a5fa',
+        backgroundColor: 'rgba(96,165,250,0.08)', fill: true,
+        stepped: true, pointRadius: 0, borderWidth: 2 },
+    ]},
+    options: { ...CHART_DEFAULTS, scales: { x: CHART_DEFAULTS.scales.x,
+      y: { ...yScale('#94a3b8', 'left'), min: 0, max: 1,
+        ticks: { callback: v => v === 1 ? 'ВКЛ' : v === 0 ? 'ВЫКЛ' : '', stepSize: 1 } },
+    }},
+  });
+}
+
+async function loadCharts() {
+  initCharts();
   try {
-    statusData = await apiFetch('/api/status');
-    renderRelayCards(statusData.relays);
-    document.getElementById('system-time').textContent = statusData.time;
-    const dot = document.getElementById('conn-dot');
-    dot.className = 'dot dot-on';
-    dot.title = 'Онлайн';
-  } catch {
-    const dot = document.getElementById('conn-dot');
-    dot.className = 'dot dot-off';
-    dot.title = 'Нет соединения';
+    const res = await apiFetch(`/api/history?hours=${chartHours}`);
+    const s   = res.sensors;
+
+    // Helper: map rows to {x, y}
+    const pts = (col) => s.filter(r => r[col] != null).map(r => ({ x: r.ts * 1000, y: r[col] }));
+
+    charts.air.data.datasets[0].data = pts('temperature');
+    charts.air.data.datasets[1].data = pts('air_humidity');
+    charts.air.update('none');
+
+    charts.aq.data.datasets[0].data = pts('eco2_ppm');
+    charts.aq.data.datasets[1].data = pts('tvoc_ppb');
+    charts.aq.update('none');
+
+    charts.soil.data.datasets[0].data = pts('soil0_pct');
+    charts.soil.data.datasets[1].data = pts('soil1_pct');
+    charts.soil.update('none');
+
+    // Relay charts
+    const rd = res.relays || {};
+    const relayKeys = statusData ? statusData.relays.map(r => String(r.id)) : Object.keys(rd);
+    relayKeys.forEach((rid, i) => {
+      if (!charts.relays.data.datasets[i]) return;
+      charts.relays.data.datasets[i].data = (rd[rid] || []).map(e => ({ x: e.ts * 1000, y: e.state }));
+      if (statusData) {
+        const info = statusData.relays.find(r => String(r.id) === rid);
+        if (info) charts.relays.data.datasets[i].label = info.name;
+      }
+    });
+    charts.relays.update('none');
+
+    // Show card only if there's data
+    const hasData = s.length > 0 || Object.keys(rd).length > 0;
+    document.getElementById('charts-card').style.display = hasData ? '' : 'none';
+  } catch (e) {
+    console.error('loadCharts error', e);
   }
 }
 
-setInterval(pollStatus, 3000);
-pollStatus();
+// Chart range buttons
+document.querySelectorAll('.chart-range-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.chart-range-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    chartHours = +btn.dataset.h;
+    loadCharts();
+  });
+});
 
-// Load version once on startup
-apiFetch('/api/version').then(v => {
-  const el = document.getElementById('footer-version');
-  if (el) el.textContent = v.commit;
-}).catch(() => {});
+// Refresh charts periodically when on dashboard
+setInterval(() => {
+  if (document.getElementById('tab-dashboard').classList.contains('active')) {
+    loadCharts();
+  }
+}, 60000);
+loadCharts();
 
 // =========================================================================
 // Relay cards
@@ -162,14 +353,14 @@ function renderRelayCards(relays) {
 async function toggleRelay(id) {
   try {
     const data = await apiFetch(`/api/relay/${id}/toggle`, { method: 'POST', body: '{}' });
-    // Optimistic update
     const card = document.getElementById(`relay-card-${id}`);
     if (card) {
       card.className = `card relay-card ${data.state ? 'on' : 'off'}`;
       card.querySelector('.relay-state').textContent = data.state ? 'ВКЛ' : 'ВЫКЛ';
     }
     showToast(`${data.name} ${data.state ? 'включён' : 'выключен'}`);
-  } catch (e) {
+    await pollStatus(); // update banner
+  } catch {
     showToast('Ошибка управления реле', 'err');
   }
 }
@@ -178,10 +369,8 @@ async function toggleRelay(id) {
 // Snapshot
 // =========================================================================
 function refreshSnapshot() {
-  const img = document.getElementById('snapshot-img');
-  img.src = `/api/snapshot?t=${Date.now()}`;
+  document.getElementById('snapshot-img').src = `/api/snapshot?t=${Date.now()}`;
 }
-
 function downloadSnapshot() {
   const a = document.createElement('a');
   a.href = `/api/snapshot?t=${Date.now()}`;
@@ -193,13 +382,10 @@ function downloadSnapshot() {
 // Camera stream
 // =========================================================================
 function startStream() {
-  const img = document.getElementById('stream-img');
-  img.src = `/video_feed?t=${Date.now()}`;
+  document.getElementById('stream-img').src = `/video_feed?t=${Date.now()}`;
 }
-
 function stopStream() {
-  const img = document.getElementById('stream-img');
-  img.src = '';
+  document.getElementById('stream-img').src = '';
 }
 
 // =========================================================================
@@ -209,27 +395,17 @@ async function loadTimelapse() {
   const gallery = document.getElementById('timelapse-gallery');
   const empty   = document.getElementById('timelapse-empty');
   gallery.innerHTML = '';
-
   try {
     const files = await apiFetch('/api/timelapse');
-    if (!files.length) {
-      empty.style.display = 'block';
-      return;
-    }
+    if (!files.length) { empty.style.display = 'block'; return; }
     empty.style.display = 'none';
-
     files.forEach(name => {
       const item = document.createElement('div');
       item.className = 'gallery-item';
-
-      // Timestamp from filename: frame_YYYYMMDD_HHMMSS.jpg
-      const m = name.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
+      const m  = name.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
       const ts = m ? `${m[3]}.${m[2]}.${m[1]} ${m[4]}:${m[5]}` : name;
-
-      item.innerHTML = `
-        <img src="/api/timelapse/${name}" loading="lazy" alt="${ts}">
-        <div class="gallery-ts">${ts}</div>
-      `;
+      item.innerHTML = `<img src="/api/timelapse/${name}" loading="lazy" alt="${ts}">
+                        <div class="gallery-ts">${ts}</div>`;
       item.addEventListener('click', () => openLightbox(`/api/timelapse/${name}`));
       gallery.appendChild(item);
     });
@@ -237,7 +413,6 @@ async function loadTimelapse() {
     showToast('Ошибка загрузки таймлапса', 'err');
   }
 }
-
 function openLightbox(src) {
   document.getElementById('lightbox-img').src = src;
   document.getElementById('lightbox').classList.add('open');
@@ -251,8 +426,6 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbo
 // =========================================================================
 // Schedule
 // =========================================================================
-let scheduleData = [];
-
 async function loadSchedule() {
   try {
     scheduleData = await apiFetch('/api/schedule');
@@ -265,18 +438,15 @@ async function loadSchedule() {
 function renderSchedule() {
   const list = document.getElementById('schedule-list');
   list.innerHTML = '';
-
-  // Map relay names from cached status
   const relayMap = {};
   if (statusData) statusData.relays.forEach(r => { relayMap[r.id] = r; });
 
   scheduleData.forEach((sched, i) => {
     const name = relayMap[sched.relay_id]?.name ?? `Реле ${sched.relay_id}`;
-    const icon = relayIcon(name);
-    const row = document.createElement('div');
+    const row  = document.createElement('div');
     row.className = 'sched-row';
     row.innerHTML = `
-      <div class="sched-label">${icon} ${name}</div>
+      <div class="sched-label">${relayIcon(name)} ${name}</div>
       <div class="form-group" style="margin:0">
         <label>Включить</label>
         <input type="time" data-i="${i}" data-key="on_time" value="${sched.on_time}">
@@ -294,11 +464,9 @@ function renderSchedule() {
     list.appendChild(row);
   });
 
-  // Sync inputs back to scheduleData on change
   list.querySelectorAll('input').forEach(inp => {
     inp.addEventListener('change', () => {
-      const idx = +inp.dataset.i;
-      const key = inp.dataset.key;
+      const idx = +inp.dataset.i, key = inp.dataset.key;
       scheduleData[idx][key] = inp.type === 'checkbox' ? inp.checked : inp.value;
     });
   });
@@ -316,21 +484,19 @@ async function saveSchedule() {
 // =========================================================================
 // Settings
 // =========================================================================
-let relaySettingsData = [];
-
 async function loadSettings() {
   try {
-    const s = await apiFetch('/api/settings');
-    document.getElementById('s-tg-token').value       = s.telegram_token ?? '';
-    document.getElementById('s-tg-chat').value        = s.telegram_chat_id ?? '';
-    document.getElementById('s-tg-timelapse').checked = s.telegram_timelapse ?? true;
-    document.getElementById('s-tl-enabled').checked   = s.timelapse_enabled ?? true;
-    document.getElementById('s-tl-interval').value    = s.timelapse_interval_minutes ?? 30;
-    document.getElementById('s-cam-device').value     = s.camera_device ?? 0;
-    document.getElementById('s-gpio-chip').value      = s.gpio_chip ?? 'gpiochip0';
+    const s  = await apiFetch('/api/settings');
+    document.getElementById('s-tg-token').value        = s.telegram_token ?? '';
+    document.getElementById('s-tg-chat').value         = s.telegram_chat_id ?? '';
+    document.getElementById('s-tg-timelapse').checked  = s.telegram_timelapse ?? true;
+    document.getElementById('s-tl-enabled').checked    = s.timelapse_enabled ?? true;
+    document.getElementById('s-tl-interval').value     = s.timelapse_interval_minutes ?? 30;
+    document.getElementById('s-cam-device').value      = s.camera_device ?? 0;
+    document.getElementById('s-gpio-chip').value       = s.gpio_chip ?? 'gpiochip0';
     const sc = s.sensors ?? {};
     document.getElementById('s-sens-enabled').checked  = sc.enabled ?? true;
-    document.getElementById('s-sens-bus').value         = sc.i2c_bus ?? 2;
+    document.getElementById('s-sens-bus').value        = sc.i2c_bus ?? 2;
     document.getElementById('s-sens-interval').value   = sc.read_interval_seconds ?? 30;
     const dry = sc.soil_dry ?? [26000, 26000];
     const wet = sc.soil_wet ?? [13000, 13000];
@@ -344,6 +510,7 @@ async function loadSettings() {
   }
 }
 
+// Relay GPIO settings
 function renderRelaySettings(relays) {
   relaySettingsData = relays.map(r => ({ ...r }));
   const list = document.getElementById('s-relays-list');
@@ -373,8 +540,7 @@ function renderRelaySettings(relays) {
 
   list.querySelectorAll('input').forEach(inp => {
     inp.addEventListener('change', () => {
-      const idx = +inp.dataset.ri;
-      const key = inp.dataset.rk;
+      const idx = +inp.dataset.ri, key = inp.dataset.rk;
       relaySettingsData[idx][key] = inp.type === 'checkbox' ? inp.checked
                                   : inp.type === 'number'   ? +inp.value
                                   : inp.value;
@@ -386,7 +552,7 @@ async function saveRelaySettings() {
   try {
     await apiFetch('/api/relays', { method: 'POST', body: JSON.stringify(relaySettingsData) });
     showToast('Настройки реле сохранены');
-    pollStatus(); // обновить карточки с новыми именами
+    pollStatus();
   } catch {
     showToast('Ошибка сохранения реле', 'err');
   }

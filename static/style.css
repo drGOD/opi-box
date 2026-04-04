@@ -348,6 +348,72 @@ input:focus { border-color: var(--accent); }
 
 /* ── Responsive ──────────────────────────────────────────────────────── */
 
+/* ── Manual mode banner ──────────────────────────────────────────────────── */
+
+.manual-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  background: rgba(251,191,36,.08);
+  border: 1px solid rgba(251,191,36,.35);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin-bottom: 16px;
+}
+.manual-banner-body  { display: flex; align-items: flex-start; gap: 12px; }
+.manual-banner-icon  { font-size: 1.4rem; line-height: 1.2; }
+.manual-banner strong { color: #fbbf24; }
+.manual-banner-desc  { font-size: .82rem; color: var(--text2); margin-top: 3px; }
+
+/* ── Charts ──────────────────────────────────────────────────────────────── */
+
+.chart-range {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.chart-range-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text2);
+  font-size: .78rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.chart-range-btn:hover  { background: var(--border); color: var(--text); }
+.chart-range-btn.active { background: var(--accent2); color: #000; border-color: var(--accent2); }
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-top: 4px;
+}
+.chart-wrap {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 14px 10px;
+  min-height: 200px;
+  position: relative;
+}
+.chart-label {
+  font-size: .78rem;
+  color: var(--text2);
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+.chart-wrap canvas { max-height: 180px; }
+
+@media (max-width: 680px) {
+  .chart-grid { grid-template-columns: 1fr; }
+}
+
 /* ── Sensor metrics ──────────────────────────────────────────────────────── */
 
 .metric-grid {
