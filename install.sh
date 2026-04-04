@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # GrowBox install / update script for Orange Pi Zero 3 / Armbian
 # Usage:
-#   First install:  sudo bash install.sh https://github.com/YOUR/opi-box.git
-#   Re-run safely:  sudo bash install.sh   (updates existing installation)
+#   One-liner:    curl -fsSL https://raw.githubusercontent.com/drGOD/opi-box/main/install.sh | sudo bash -s https://github.com/drGOD/opi-box.git
+#   Local file:   sudo bash install.sh https://github.com/drGOD/opi-box.git
+#   Re-run/update (already cloned): sudo bash /opt/growbox/install.sh
 
 set -e
 
