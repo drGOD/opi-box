@@ -9,7 +9,7 @@ DEFAULT_CONFIG = {
     "telegram_timelapse": True,
     "timelapse_interval_minutes": 30,
     "timelapse_enabled": True,
-    "camera_device": 0,
+    "camera_device": 1,  # 0 = cedrus HW decoder on OPi Zero 3, camera starts at 1
     "gpio_chip": "gpiochip0",
     "relays": [
         {"id": 1, "name": "Свет",       "gpio_pin": 7, "active_low": True, "state": False},

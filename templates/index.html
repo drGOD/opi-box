@@ -39,7 +39,7 @@
       <div class="card snapshot-card">
         <div class="card-title">Камера</div>
         <div class="snapshot-wrap">
-          <img id="snapshot-img" src="/api/snapshot" alt="snapshot" onerror="this.src='/static/no-camera.svg'">
+          <img id="snapshot-img" src="/api/snapshot" alt="snapshot" onerror="this.onerror=null;this.src='/static/no-camera.svg'">
         </div>
         <div class="card-footer">
           <button class="btn btn-sm" onclick="refreshSnapshot()">Обновить снимок</button>
