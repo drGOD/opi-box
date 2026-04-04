@@ -1,0 +1,10 @@
+[Unit]
+Description=GrowBox OTA update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/growbox/update.sh
+StandardOutput=journal
+StandardError=journal

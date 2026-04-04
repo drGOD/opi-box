@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install linter
+        run: pip install flake8
+
+      - name: flake8
+        run: |
+          flake8 . \
+            --max-line-length=100 \
+            --exclude=venv,.venv,timelapse,__pycache__ \
+            --ignore=E501,W503
+
+  imports:
+    name: Check imports
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install runtime deps (no GPIO/OpenCV)
+        run: pip install flask requests
+
+      - name: Verify modules load
+        run: |
+          python -c "
+          import sys, importlib, types
+
+          # Stub out hardware-only modules so imports don't fail in CI
+          for mod in ('cv2', 'gpiod'):
+              sys.modules[mod] = types.ModuleType(mod)
+
+          import config
+          import telegram_bot
+          import relay
+          # scheduler and app depend on camera/relay — covered by the stubs above
+          print('All imports OK')
+          "

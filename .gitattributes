@@ -1,0 +1,13 @@
+# Force LF for shell scripts and service files (they run on Linux)
+*.sh        text eol=lf
+*.service   text eol=lf
+*.timer     text eol=lf
+
+# Python and web — auto
+*.py        text eol=lf
+*.html      text eol=lf
+*.css       text eol=lf
+*.js        text eol=lf
+*.json      text eol=lf
+*.yml       text eol=lf
+*.txt       text eol=lf

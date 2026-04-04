@@ -1,0 +1,13 @@
+[Unit]
+Description=GrowBox OTA update — runs every 15 minutes
+
+[Timer]
+# Wait 2 min after boot (let network settle)
+OnBootSec=2min
+# Then every 15 min
+OnUnitActiveSec=15min
+# Run immediately if a trigger was missed (e.g. device was off)
+Persistent=true
+
+[Install]
+WantedBy=timers.target

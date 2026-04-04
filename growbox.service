@@ -1,0 +1,16 @@
+[Unit]
+Description=GrowBox — smart grow box controller
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/growbox
+ExecStart=/opt/growbox/venv/bin/python app.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

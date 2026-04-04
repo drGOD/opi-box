@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GrowBox</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <span class="logo">🌱 GrowBox</span>
+  </div>
+  <div class="header-right">
+    <span id="system-time" class="sys-time"></span>
+    <span id="conn-dot" class="dot dot-off" title="Соединение"></span>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="dashboard">Панель</button>
+  <button class="tab" data-tab="camera">Камера</button>
+  <button class="tab" data-tab="timelapse">Таймлапс</button>
+  <button class="tab" data-tab="schedule">Расписание</button>
+  <button class="tab" data-tab="settings">Настройки</button>
+</nav>
+
+<main>
+
+  <!-- ===== DASHBOARD ===== -->
+  <section id="tab-dashboard" class="tab-content active">
+    <div class="dash-grid">
+
+      <!-- Relay cards (filled dynamically) -->
+      <div id="relay-cards" class="relay-row"></div>
+
+      <!-- Camera snapshot -->
+      <div class="card snapshot-card">
+        <div class="card-title">Камера</div>
+        <div class="snapshot-wrap">
+          <img id="snapshot-img" src="/api/snapshot" alt="snapshot" onerror="this.src='/static/no-camera.svg'">
+        </div>
+        <div class="card-footer">
+          <button class="btn btn-sm" onclick="refreshSnapshot()">Обновить снимок</button>
+          <a class="btn btn-sm btn-outline" href="/video_feed" target="_blank">Прямой эфир ↗</a>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ===== CAMERA ===== -->
+  <section id="tab-camera" class="tab-content">
+    <div class="card stream-card">
+      <div class="card-title">Прямой эфир</div>
+      <div class="stream-wrap">
+        <img id="stream-img" alt="stream">
+      </div>
+      <div class="card-footer">
+        <button class="btn" onclick="startStream()">▶ Включить поток</button>
+        <button class="btn btn-outline" onclick="stopStream()">■ Остановить</button>
+        <button class="btn btn-outline" onclick="downloadSnapshot()">⬇ Скачать снимок</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== TIMELAPSE ===== -->
+  <section id="tab-timelapse" class="tab-content">
+    <div class="card">
+      <div class="card-title">
+        Архив таймлапса
+        <button class="btn btn-sm btn-outline" style="float:right" onclick="loadTimelapse()">Обновить</button>
+      </div>
+      <div id="timelapse-gallery" class="gallery"></div>
+      <div id="timelapse-empty" class="empty-state" style="display:none">
+        Снимки пока не сохранены. Они появятся после первого срабатывания таймлапса.
+      </div>
+    </div>
+
+    <!-- Lightbox -->
+    <div id="lightbox" class="lightbox" onclick="closeLightbox()">
+      <img id="lightbox-img" src="" alt="">
+      <button class="lightbox-close" onclick="closeLightbox()">✕</button>
+    </div>
+  </section>
+
+  <!-- ===== SCHEDULE ===== -->
+  <section id="tab-schedule" class="tab-content">
+    <div class="card">
+      <div class="card-title">Расписание реле</div>
+      <p class="hint">Время задаётся в формате ЧЧ:ММ (24-часовой). Расписание применяется автоматически.</p>
+      <div id="schedule-list"></div>
+      <div class="form-actions">
+        <button class="btn" onclick="saveSchedule()">Сохранить расписание</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SETTINGS ===== -->
+  <section id="tab-settings" class="tab-content">
+    <div class="card">
+      <div class="card-title">Telegram</div>
+      <div class="form-group">
+        <label>Bot Token</label>
+        <input type="text" id="s-tg-token" placeholder="1234567890:AAF…">
+      </div>
+      <div class="form-group">
+        <label>Chat ID</label>
+        <input type="text" id="s-tg-chat" placeholder="-100xxxxxxxxx или @username">
+      </div>
+      <div class="form-group checkbox-group">
+        <label>
+          <input type="checkbox" id="s-tg-timelapse">
+          Отправлять таймлапс в Telegram
+        </label>
+      </div>
+      <div class="form-actions">
+        <button class="btn" onclick="saveSettings()">Сохранить</button>
+        <button class="btn btn-outline" onclick="testTelegram()">Тест уведомления</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Таймлапс</div>
+      <div class="form-group checkbox-group">
+        <label>
+          <input type="checkbox" id="s-tl-enabled">
+          Включить таймлапс
+        </label>
+      </div>
+      <div class="form-group">
+        <label>Интервал (минуты)</label>
+        <input type="number" id="s-tl-interval" min="1" max="1440">
+      </div>
+      <div class="form-actions">
+        <button class="btn" onclick="saveSettings()">Сохранить</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Система</div>
+      <div class="form-group">
+        <label>Устройство камеры (индекс)</label>
+        <input type="number" id="s-cam-device" min="0" max="10">
+      </div>
+      <div class="form-group">
+        <label>GPIO чип</label>
+        <input type="text" id="s-gpio-chip" placeholder="gpiochip0">
+      </div>
+      <div class="form-actions">
+        <button class="btn" onclick="saveSettings()">Сохранить</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div id="toast" class="toast"></div>
+
+<footer class="app-footer">
+  GrowBox &nbsp;·&nbsp; <span id="footer-version">…</span>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
