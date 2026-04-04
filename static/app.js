@@ -263,30 +263,81 @@ async function saveSchedule() {
 // =========================================================================
 // Settings
 // =========================================================================
+let relaySettingsData = [];
+
 async function loadSettings() {
   try {
     const s = await apiFetch('/api/settings');
-    document.getElementById('s-tg-token').value      = s.telegram_token ?? '';
-    document.getElementById('s-tg-chat').value       = s.telegram_chat_id ?? '';
+    document.getElementById('s-tg-token').value       = s.telegram_token ?? '';
+    document.getElementById('s-tg-chat').value        = s.telegram_chat_id ?? '';
     document.getElementById('s-tg-timelapse').checked = s.telegram_timelapse ?? true;
     document.getElementById('s-tl-enabled').checked   = s.timelapse_enabled ?? true;
     document.getElementById('s-tl-interval').value    = s.timelapse_interval_minutes ?? 30;
     document.getElementById('s-cam-device').value     = s.camera_device ?? 0;
     document.getElementById('s-gpio-chip').value      = s.gpio_chip ?? 'gpiochip0';
+    renderRelaySettings(s.relays ?? []);
   } catch {
     showToast('Ошибка загрузки настроек', 'err');
   }
 }
 
+function renderRelaySettings(relays) {
+  relaySettingsData = relays.map(r => ({ ...r }));
+  const list = document.getElementById('s-relays-list');
+  list.innerHTML = '';
+
+  relaySettingsData.forEach((r, i) => {
+    const row = document.createElement('div');
+    row.className = 'sched-row';
+    row.innerHTML = `
+      <div class="sched-label">${relayIcon(r.name)} Реле ${r.id}</div>
+      <div class="form-group" style="margin:0">
+        <label>Название</label>
+        <input type="text" data-ri="${i}" data-rk="name" value="${r.name}">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>GPIO пин</label>
+        <input type="number" data-ri="${i}" data-rk="gpio_pin" value="${r.gpio_pin}" min="0" max="255" style="width:70px">
+      </div>
+      <div class="form-group sched-enabled" style="margin:0">
+        <label>Инверт.</label>
+        <input type="checkbox" data-ri="${i}" data-rk="active_low" ${r.active_low ? 'checked' : ''}
+               style="width:18px;height:18px;accent-color:var(--accent);margin-top:8px">
+      </div>
+    `;
+    list.appendChild(row);
+  });
+
+  list.querySelectorAll('input').forEach(inp => {
+    inp.addEventListener('change', () => {
+      const idx = +inp.dataset.ri;
+      const key = inp.dataset.rk;
+      relaySettingsData[idx][key] = inp.type === 'checkbox' ? inp.checked
+                                  : inp.type === 'number'   ? +inp.value
+                                  : inp.value;
+    });
+  });
+}
+
+async function saveRelaySettings() {
+  try {
+    await apiFetch('/api/relays', { method: 'POST', body: JSON.stringify(relaySettingsData) });
+    showToast('Настройки реле сохранены');
+    pollStatus(); // обновить карточки с новыми именами
+  } catch {
+    showToast('Ошибка сохранения реле', 'err');
+  }
+}
+
 async function saveSettings() {
   const payload = {
-    telegram_token:            document.getElementById('s-tg-token').value.trim(),
-    telegram_chat_id:          document.getElementById('s-tg-chat').value.trim(),
-    telegram_timelapse:        document.getElementById('s-tg-timelapse').checked,
-    timelapse_enabled:         document.getElementById('s-tl-enabled').checked,
+    telegram_token:             document.getElementById('s-tg-token').value.trim(),
+    telegram_chat_id:           document.getElementById('s-tg-chat').value.trim(),
+    telegram_timelapse:         document.getElementById('s-tg-timelapse').checked,
+    timelapse_enabled:          document.getElementById('s-tl-enabled').checked,
     timelapse_interval_minutes: +document.getElementById('s-tl-interval').value,
-    camera_device:             +document.getElementById('s-cam-device').value,
-    gpio_chip:                 document.getElementById('s-gpio-chip').value.trim(),
+    camera_device:              +document.getElementById('s-cam-device').value,
+    gpio_chip:                  document.getElementById('s-gpio-chip').value.trim(),
   };
   try {
     await apiFetch('/api/settings', { method: 'POST', body: JSON.stringify(payload) });

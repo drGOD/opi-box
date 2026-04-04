@@ -162,6 +162,11 @@ def get_settings():
         "timelapse_interval_minutes": cfg.get("timelapse_interval_minutes", 30),
         "camera_device": cfg.get("camera_device", 0),
         "gpio_chip": cfg.get("gpio_chip", "gpiochip0"),
+        "relays": [
+            {"id": r["id"], "name": r["name"], "gpio_pin": r["gpio_pin"],
+             "active_low": r.get("active_low", True)}
+            for r in cfg.get("relays", [])
+        ],
     })
 
 
@@ -182,6 +187,37 @@ def update_settings():
     notifier.token = cfg["telegram_token"]
     notifier.chat_id = cfg["telegram_chat_id"]
     scheduler.config = cfg
+    return jsonify({"ok": True})
+
+
+@app.route("/api/relays", methods=["POST"])
+def update_relays():
+    data = request.json
+    if not isinstance(data, list):
+        return jsonify({"error": "Expected list"}), 400
+    cfg = load_config()
+    updates = {r["id"]: r for r in data if "id" in r}
+    for r in cfg["relays"]:
+        upd = updates.get(r["id"])
+        if upd is None:
+            continue
+        r["name"] = str(upd.get("name", r["name"]))
+        r["gpio_pin"] = int(upd.get("gpio_pin", r["gpio_pin"]))
+        r["active_low"] = bool(upd.get("active_low", r.get("active_low", True)))
+    save_config(cfg)
+    config.update(cfg)
+    # Reinitialize relay objects with new settings
+    for r in cfg["relays"]:
+        old = relays.get(r["id"])
+        new_rel = Relay(
+            relay_id=r["id"],
+            name=r["name"],
+            gpio_pin=r["gpio_pin"],
+            active_low=r.get("active_low", True),
+            gpio_chip=cfg.get("gpio_chip", "gpiochip0"),
+        )
+        new_rel.state = old.state if old else r.get("state", False)
+        relays[r["id"]] = new_rel
     return jsonify({"ok": True})
 
 
