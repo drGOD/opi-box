@@ -12,13 +12,24 @@ APP_DIR=/opt/growbox
 
 echo "=== GrowBox installer ==="
 
-# --- System packages ---
+# --- Swap (prevents OOM crashes during heavy pip installs on low-RAM boards) ---
+if [ ! -f /swapfile ]; then
+    echo ">> Creating 2 GB swapfile..."
+    fallocate -l 2G /swapfile
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+    echo '/swapfile none swap sw 0 0' >> /etc/fstab
+else
+    swapon /swapfile 2>/dev/null || true
+fi
+
+# --- System packages (only small, essential ones — OpenCV comes via pip) ---
 apt-get update -qq
-apt-get install -y \
+apt-get install -y --no-install-recommends \
     git python3 python3-venv python3-pip \
     libgpiod2 gpiod python3-libgpiod \
-    libopencv-dev python3-opencv \
-    ffmpeg v4l-utils
+    v4l-utils
 
 # --- Clone or update source ---
 if [ -d "$APP_DIR/.git" ]; then
