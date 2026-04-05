@@ -68,7 +68,7 @@ def _schedule_expected_states() -> dict[int, bool]:
     for sched in config.get("schedules", []):
         if not sched.get("enabled"):
             continue
-        on  = tuple(map(int, sched.get("on_time",  "00:00").split(":")))
+        on = tuple(map(int, sched.get("on_time", "00:00").split(":")))
         off = tuple(map(int, sched.get("off_time", "00:00").split(":")))
         if on <= off:
             should_on = on <= cur < off
@@ -254,7 +254,7 @@ def get_settings():
 @app.route("/api/settings", methods=["POST"])
 def update_settings():
     data = request.json
-    cfg  = load_config()
+    cfg = load_config()
     allowed = [
         "telegram_token", "telegram_chat_id", "telegram_timelapse",
         "timelapse_enabled", "timelapse_interval_minutes",
@@ -267,7 +267,7 @@ def update_settings():
         cfg.setdefault("sensors", {}).update(data["sensors"])
     save_config(cfg)
     config.update(cfg)
-    notifier.token   = cfg["telegram_token"]
+    notifier.token = cfg["telegram_token"]
     notifier.chat_id = cfg["telegram_chat_id"]
     scheduler.config = cfg
     return jsonify({"ok": True})
@@ -278,14 +278,14 @@ def update_relays():
     data = request.json
     if not isinstance(data, list):
         return jsonify({"error": "Expected list"}), 400
-    cfg     = load_config()
+    cfg = load_config()
     updates = {r["id"]: r for r in data if "id" in r}
     for r in cfg["relays"]:
         upd = updates.get(r["id"])
         if upd is None:
             continue
-        r["name"]       = str(upd.get("name", r["name"]))
-        r["gpio_pin"]   = int(upd.get("gpio_pin", r["gpio_pin"]))
+        r["name"] = str(upd.get("name", r["name"]))
+        r["gpio_pin"] = int(upd.get("gpio_pin", r["gpio_pin"]))
         r["active_low"] = bool(upd.get("active_low", r.get("active_low", True)))
     save_config(cfg)
     config.update(cfg)
