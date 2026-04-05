@@ -1,30 +1,29 @@
-import cv2
+import logging
 import threading
 import time
-import logging
 from datetime import datetime
 from pathlib import Path
+
+import cv2
 
 logger = logging.getLogger(__name__)
 
 TIMELAPSE_DIR = Path(__file__).parent / "timelapse"
 TIMELAPSE_DIR.mkdir(exist_ok=True)
 
-# JPEG encode params
 _JPEG_PARAMS = [cv2.IMWRITE_JPEG_QUALITY, 85]
 
 
 class Camera:
     """Continuous capture thread; provides MJPEG stream and snapshot/timelapse."""
 
-    def __init__(self, device: int = 0):
+    def __init__(self, device=0):
         self.device = device
         self._lock = threading.Lock()
-        self._frame = None          # raw BGR ndarray
+        self._frame = None
         self._running = False
         self._thread = None
-
-    # ------------------------------------------------------------------ lifecycle
+        self._active_source = None
 
     def start(self) -> None:
         self._running = True
@@ -35,27 +34,87 @@ class Camera:
     def stop(self) -> None:
         self._running = False
 
+    def _capture_candidates(self) -> list:
+        candidates = [self.device]
+
+        if isinstance(self.device, int):
+            candidates.append(f"/dev/video{self.device}")
+            for index in range(4):
+                if index != self.device:
+                    candidates.append(index)
+                    candidates.append(f"/dev/video{index}")
+        elif isinstance(self.device, str) and self.device.startswith("/dev/video"):
+            suffix = self.device.removeprefix("/dev/video")
+            if suffix.isdigit():
+                candidates.append(int(suffix))
+
+        deduped = []
+        seen = set()
+        for item in candidates:
+            key = str(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+        return deduped
+
+    def _open_capture(self):
+        for source in self._capture_candidates():
+            for backend in (cv2.CAP_V4L2, cv2.CAP_ANY):
+                try:
+                    cap = cv2.VideoCapture(source, backend)
+                except Exception:
+                    cap = cv2.VideoCapture(source)
+                if not cap or not cap.isOpened():
+                    if cap:
+                        cap.release()
+                    continue
+
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+
+                ok, frame = cap.read()
+                if ok and frame is not None:
+                    self._active_source = source
+                    logger.info("Camera opened via source %s (backend %s)", source, backend)
+                    with self._lock:
+                        self._frame = frame
+                    return cap
+
+                cap.release()
+
+        self._active_source = None
+        return None
+
     def _capture_loop(self) -> None:
-        cap = cv2.VideoCapture(self.device)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
-        if not cap.isOpened():
-            logger.error("Cannot open camera device %s", self.device)
-            return
-
         while self._running:
-            ret, frame = cap.read()
-            if ret:
-                with self._lock:
-                    self._frame = frame
-            else:
-                time.sleep(0.5)
+            cap = self._open_capture()
+            if cap is None:
+                logger.error("Cannot open camera device %s", self.device)
+                time.sleep(2)
+                continue
 
-        cap.release()
+            try:
+                failures = 0
+                while self._running:
+                    ret, frame = cap.read()
+                    if ret and frame is not None:
+                        failures = 0
+                        with self._lock:
+                            self._frame = frame
+                        continue
 
-    # ------------------------------------------------------------------ output
+                    failures += 1
+                    if failures >= 5:
+                        logger.warning("Camera read failed repeatedly on %s, reconnecting", self._active_source)
+                        break
+                    time.sleep(0.2)
+            finally:
+                cap.release()
+
+            time.sleep(1)
 
     @property
     def is_available(self) -> bool:
@@ -81,7 +140,6 @@ class Camera:
             return str(path)
 
     def generate_stream(self):
-        """Generator for MJPEG multipart stream."""
         while True:
             snapshot = self.get_snapshot()
             if snapshot:
@@ -91,4 +149,4 @@ class Camera:
                     + snapshot
                     + b"\r\n"
                 )
-            time.sleep(0.05)  # ~20 fps cap
+            time.sleep(0.05)

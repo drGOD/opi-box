@@ -13,9 +13,9 @@ DEFAULT_CONFIG = {
     "camera_device": 1,  # 0 = cedrus HW decoder on OPi Zero 3, camera starts at 1
     "gpio_chip": "gpiochip0",
     "relays": [
-        {"id": 1, "name": "РЎРІРµС‚", "gpio_pin": 7, "active_low": True, "state": False},
-        {"id": 2, "name": "Р’РµРЅС‚РёР»СЏС†РёСЏ", "gpio_pin": 8, "active_low": True, "state": False},
-        {"id": 3, "name": "РЈРІР»Р°Р¶РЅРёС‚РµР»СЊ", "gpio_pin": 9, "active_low": True, "state": False},
+        {"id": 1, "name": "Свет", "gpio_pin": 7, "active_low": True, "state": False},
+        {"id": 2, "name": "Вентиляция", "gpio_pin": 8, "active_low": True, "state": False},
+        {"id": 3, "name": "Увлажнитель", "gpio_pin": 9, "active_low": True, "state": False},
     ],
     "schedules": [
         {"relay_id": 1, "enabled": True, "on_time": "08:00", "off_time": "22:00"},
@@ -38,9 +38,27 @@ DEFAULT_CONFIG = {
     },
 }
 
+BROKEN_RELAY_NAMES = {
+    1: "Р РЋР Р†Р ВµРЎвЂљ",
+    2: "Р вЂ™Р ВµР Р…РЎвЂљР С‘Р В»РЎРЏРЎвЂ Р С‘РЎРЏ",
+    3: "Р Р€Р Р†Р В»Р В°Р В¶Р Р…Р С‘РЎвЂљР ВµР В»РЎРЉ",
+}
+
+
+def _normalize_relay_name(relay: dict) -> dict:
+    normalized = dict(relay)
+    default_name = next(
+        (item["name"] for item in DEFAULT_CONFIG["relays"] if item["id"] == normalized.get("id")),
+        None,
+    )
+    broken_name = BROKEN_RELAY_NAMES.get(normalized.get("id"))
+    if default_name and normalized.get("name") == broken_name:
+        normalized["name"] = default_name
+    return normalized
+
 
 def _merge_relay_lists(data: dict) -> list:
-    relays = [dict(item) for item in data.get("relays", [])]
+    relays = [_normalize_relay_name(item) for item in data.get("relays", [])]
     existing = {item.get("id") for item in relays}
     for item in DEFAULT_CONFIG["relays"]:
         if item["id"] not in existing:
@@ -78,9 +96,14 @@ def load_config() -> dict:
     if not CONFIG_FILE.exists():
         save_config(DEFAULT_CONFIG)
         return _merge_config(DEFAULT_CONFIG)
+
     with open(CONFIG_FILE, encoding="utf-8") as f:
         data = json.load(f)
-    return _merge_config(data)
+
+    merged = _merge_config(data)
+    if merged != data:
+        save_config(merged)
+    return merged
 
 
 def save_config(cfg: dict) -> None:
