@@ -78,7 +78,29 @@ class SensorHubTests(unittest.TestCase):
         hub._aht = BrokenAHT()
         hub._read_once()
 
-        self.assertIsNone(hub.latest)
+        self.assertEqual(hub.latest, {})
+
+    def test_read_once_keeps_other_sensor_values_when_aht_fails(self):
+        readings = []
+        hub = SensorHub(
+            {"sensors": {"soil_dry": [26000, 26000], "soil_wet": [13000, 13000]}},
+            on_reading=readings.append,
+        )
+
+        class BrokenAHT:
+            def read(self):
+                raise RuntimeError("broken")
+
+        hub._aht = BrokenAHT()
+        hub._ens = FakeENS()
+        hub._ads = FakeADS()
+
+        hub._read_once()
+
+        self.assertNotIn("air_humidity", hub.latest)
+        self.assertEqual(hub.latest["eco2_ppm"], 700)
+        self.assertEqual(hub.latest["soil"][0]["moisture_pct"], 46.2)
+        self.assertEqual(readings[0]["aqi"], 2)
 
     def test_available_and_close_reflect_current_hardware(self):
         hub = SensorHub({"sensors": {}}, on_reading=None)

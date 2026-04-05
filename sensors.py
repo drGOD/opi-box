@@ -1,15 +1,13 @@
 """
-Sensor management: AHT21 (temp/humidity), ENS160 (CO₂/TVOC/AQI), ADS1115 (soil moisture)
-Runs a background thread; each sensor is optional — failures are logged and skipped.
+Sensor management: AHT21 (temp/humidity), ENS160 (CO2/TVOC/AQI), ADS1115 (soil moisture).
+Runs a background thread; each sensor is optional, failures are logged and skipped.
 """
+import logging
 import threading
 import time
-import logging
 
 logger = logging.getLogger(__name__)
 
-
-# ── Low-level drivers ──────────────────────────────────────────────────────
 
 class AHT21:
     CMD_INIT = [0xBE, 0x08, 0x00]
@@ -21,15 +19,36 @@ class AHT21:
         bus.write_i2c_block_data(addr, self.CMD_INIT[0], self.CMD_INIT[1:])
         time.sleep(0.04)
 
+    @staticmethod
+    def _crc8(data: list[int]) -> int:
+        crc = 0xFF
+        for byte in data:
+            crc ^= byte
+            for _ in range(8):
+                if crc & 0x80:
+                    crc = ((crc << 1) ^ 0x31) & 0xFF
+                else:
+                    crc = (crc << 1) & 0xFF
+        return crc
+
     def read(self) -> tuple[float, float]:
-        """Returns (temperature °C, humidity %)."""
+        """Return (temperature C, humidity %)."""
         self.bus.write_i2c_block_data(self.addr, self.CMD_MEASURE[0], self.CMD_MEASURE[1:])
         time.sleep(0.08)
         for _ in range(10):
             if not (self.bus.read_byte(self.addr) & 0x80):
                 break
             time.sleep(0.01)
+
         data = self.bus.read_i2c_block_data(self.addr, 0x00, 7)
+        status = data[0]
+        if status & 0x80:
+            raise RuntimeError("AHT21 is still busy")
+        if (status & 0x18) != 0x18:
+            raise RuntimeError(f"AHT21 not calibrated: status=0x{status:02X}")
+        if self._crc8(data[:6]) != data[6]:
+            raise RuntimeError("AHT21 CRC mismatch")
+
         raw_hum = (data[1] << 12) | (data[2] << 4) | (data[3] >> 4)
         raw_tmp = ((data[3] & 0x0F) << 16) | (data[4] << 8) | data[5]
         return (raw_tmp / 0x100000) * 200.0 - 50.0, (raw_hum / 0x100000) * 100.0
@@ -48,20 +67,26 @@ class ENS160:
     def __init__(self, bus, addr: int = 0x53):
         self.bus = bus
         self.addr = addr
-        bus.write_byte_data(addr, self.REG_OPMODE, 0xF0)   # reset
+        bus.write_byte_data(addr, self.REG_OPMODE, 0xF0)
         time.sleep(0.01)
-        bus.write_byte_data(addr, self.REG_OPMODE, 0x01)   # idle
+        bus.write_byte_data(addr, self.REG_OPMODE, 0x01)
         time.sleep(0.01)
-        bus.write_byte_data(addr, self.REG_OPMODE, 0x02)   # standard
+        bus.write_byte_data(addr, self.REG_OPMODE, 0x02)
         time.sleep(0.05)
 
     def set_compensation(self, temp: float, hum: float) -> None:
         t_raw = int((temp + 273.15) * 64)
         h_raw = int(hum * 512)
-        self.bus.write_i2c_block_data(self.addr, self.REG_TEMP_IN,
-                                      [t_raw & 0xFF, (t_raw >> 8) & 0xFF])
-        self.bus.write_i2c_block_data(self.addr, self.REG_RH_IN,
-                                      [h_raw & 0xFF, (h_raw >> 8) & 0xFF])
+        self.bus.write_i2c_block_data(
+            self.addr,
+            self.REG_TEMP_IN,
+            [t_raw & 0xFF, (t_raw >> 8) & 0xFF],
+        )
+        self.bus.write_i2c_block_data(
+            self.addr,
+            self.REG_RH_IN,
+            [h_raw & 0xFF, (h_raw >> 8) & 0xFF],
+        )
 
     def read(self) -> dict:
         status = self.bus.read_byte_data(self.addr, self.REG_STATUS)
@@ -72,7 +97,9 @@ class ENS160:
         lo, hi = (self.bus.read_byte_data(self.addr, self.REG_ECO2 + i) for i in range(2))
         eco2 = lo | (hi << 8)
         return {
-            "aqi": aqi, "tvoc_ppb": tvoc, "eco2_ppm": eco2,
+            "aqi": aqi,
+            "tvoc_ppb": tvoc,
+            "eco2_ppm": eco2,
             "validity": self.VALIDITY.get(validity, "Unknown"),
         }
 
@@ -87,9 +114,10 @@ class ADS1115:
         self.addr = addr
 
     def read_raw(self, channel: int) -> int:
-        config = (0x8000 | self.MUX[channel] | 0x0200 | 0x0100 | 0x0080 | 0x0003)
+        config = 0x8000 | self.MUX[channel] | 0x0200 | 0x0100 | 0x0080 | 0x0003
         self.bus.write_i2c_block_data(
-            self.addr, self.REG_CONFIG,
+            self.addr,
+            self.REG_CONFIG,
             [(config >> 8) & 0xFF, config & 0xFF],
         )
         time.sleep(0.02)
@@ -98,13 +126,11 @@ class ADS1115:
         return raw - 65536 if raw > 32767 else raw
 
 
-# ── SensorHub ──────────────────────────────────────────────────────────────
-
 class SensorHub:
     """
-    Manages all sensors and polls them in a background daemon thread.
-    Holds a reference to the shared config dict — picks up live changes.
-    on_reading(data) is called after each successful read (e.g. to write to DB).
+    Manage all sensors and poll them in a background daemon thread.
+    Holds a reference to the shared config dict so live changes are visible.
+    on_reading(data) is called after each successful read.
     """
 
     def __init__(self, config: dict, on_reading=None):
@@ -120,8 +146,6 @@ class SensorHub:
         self._ads: ADS1115 | None = None
         self._setup()
 
-    # ── Init ──────────────────────────────────────────────────────────────
-
     def _scfg(self) -> dict:
         return self._config.get("sensors", {})
 
@@ -130,14 +154,15 @@ class SensorHub:
             return
         try:
             import smbus2
+
             self._bus = smbus2.SMBus(self._scfg().get("i2c_bus", 2))
         except Exception as exc:
-            logger.warning("I2C bus unavailable: %s — sensors disabled", exc)
+            logger.warning("I2C bus unavailable: %s - sensors disabled", exc)
             return
 
         for name, cls, attr in [
-            ("AHT21",   AHT21,   "_aht"),
-            ("ENS160",  ENS160,  "_ens"),
+            ("AHT21", AHT21, "_aht"),
+            ("ENS160", ENS160, "_ens"),
             ("ADS1115", ADS1115, "_ads"),
         ]:
             try:
@@ -150,11 +175,9 @@ class SensorHub:
     def available(self) -> bool:
         return any([self._aht, self._ens, self._ads])
 
-    # ── Background thread ─────────────────────────────────────────────────
-
     def start(self) -> None:
         if not self.available:
-            logger.info("No sensors detected — hub not started")
+            logger.info("No sensors detected - hub not started")
             return
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -169,19 +192,20 @@ class SensorHub:
             self._read_once()
             time.sleep(self._scfg().get("read_interval_seconds", 30))
 
-    # ── Sensor reading ────────────────────────────────────────────────────
-
     def _read_once(self) -> None:
         data: dict = {}
-        try:
-            temp = hum = None
+        temp = hum = None
 
-            if self._aht:
+        if self._aht:
+            try:
                 temp, hum = self._aht.read()
                 data["temperature"] = round(temp, 1)
                 data["air_humidity"] = round(hum, 1)
+            except Exception as exc:
+                logger.warning("AHT21 read failed: %s", exc)
 
-            if self._ens:
+        if self._ens:
+            try:
                 if temp is not None:
                     try:
                         self._ens.set_compensation(temp, hum)
@@ -192,8 +216,11 @@ class SensorHub:
                 data["tvoc_ppb"] = air["tvoc_ppb"]
                 data["eco2_ppm"] = air["eco2_ppm"]
                 data["ens_status"] = air["validity"]
+            except Exception as exc:
+                logger.warning("ENS160 read failed: %s", exc)
 
-            if self._ads:
+        if self._ads:
+            try:
                 dry_vals = self._scfg().get("soil_dry", [26000, 26000])
                 wet_vals = self._scfg().get("soil_wet", [13000, 13000])
                 soil = []
@@ -204,18 +231,18 @@ class SensorHub:
                         wet = wet_vals[i] if i < len(wet_vals) else 13000
                         span = dry - wet
                         pct = (dry - raw) / span * 100.0 if span else 0.0
-                        soil.append({
-                            "channel": ch,
-                            "moisture_pct": round(max(0.0, min(100.0, pct)), 1),
-                            "raw": raw,
-                        })
+                        soil.append(
+                            {
+                                "channel": ch,
+                                "moisture_pct": round(max(0.0, min(100.0, pct)), 1),
+                                "raw": raw,
+                            }
+                        )
                     except Exception as exc:
                         logger.warning("ADS1115 ch%d: %s", ch, exc)
                 data["soil"] = soil
-
-        except Exception as exc:
-            logger.error("Sensor read error: %s", exc)
-            return
+            except Exception as exc:
+                logger.warning("ADS1115 read failed: %s", exc)
 
         with self._lock:
             self._data = data
@@ -230,8 +257,6 @@ class SensorHub:
     def latest(self) -> dict | None:
         with self._lock:
             return self._data
-
-    # ── Cleanup ───────────────────────────────────────────────────────────
 
     def close(self) -> None:
         self._running = False
