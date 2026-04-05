@@ -12,12 +12,33 @@ logger = logging.getLogger(__name__)
 class AHT21:
     CMD_INIT = [0xBE, 0x08, 0x00]
     CMD_MEASURE = [0xAC, 0x33, 0x00]
+    CMD_SOFT_RESET = 0xBA
 
     def __init__(self, bus, addr: int = 0x38):
         self.bus = bus
         self.addr = addr
-        bus.write_i2c_block_data(addr, self.CMD_INIT[0], self.CMD_INIT[1:])
+        # Soft reset + wait >=20ms per datasheet
+        try:
+            bus.write_byte(addr, self.CMD_SOFT_RESET)
+        except Exception:
+            pass
         time.sleep(0.04)
+        # Calibration / init command
+        self._write(self.CMD_INIT)
+        time.sleep(0.04)
+
+    def _write(self, payload: list[int]) -> None:
+        """Raw I2C write — AHT21 has no register addressing."""
+        from smbus2 import i2c_msg
+        msg = i2c_msg.write(self.addr, payload)
+        self.bus.i2c_rdwr(msg)
+
+    def _read_raw(self, n: int) -> list[int]:
+        """Raw I2C read — no register byte sent first."""
+        from smbus2 import i2c_msg
+        msg = i2c_msg.read(self.addr, n)
+        self.bus.i2c_rdwr(msg)
+        return list(msg)
 
     @staticmethod
     def _crc8(data: list[int]) -> int:
@@ -33,17 +54,20 @@ class AHT21:
 
     def read(self) -> tuple[float, float]:
         """Return (temperature C, humidity %)."""
-        self.bus.write_i2c_block_data(self.addr, self.CMD_MEASURE[0], self.CMD_MEASURE[1:])
+        self._write(self.CMD_MEASURE)
         time.sleep(0.08)
-        for _ in range(10):
-            if not (self.bus.read_byte(self.addr) & 0x80):
+        # Poll status (raw read of 1 byte) until busy bit clears
+        for _ in range(20):
+            status = self._read_raw(1)[0]
+            if not (status & 0x80):
                 break
             time.sleep(0.01)
+        else:
+            raise RuntimeError("AHT21 stayed busy")
 
-        data = self.bus.read_i2c_block_data(self.addr, 0x00, 7)
-        status = data[0]
-        if status & 0x80:
-            raise RuntimeError("AHT21 is still busy")
+        data = self._read_raw(7)
+        if self._crc8(data[:6]) != data[6]:
+            logger.debug("AHT21 CRC mismatch: %s", data)
 
         raw_hum = (data[1] << 12) | (data[2] << 4) | (data[3] >> 4)
         raw_tmp = ((data[3] & 0x0F) << 16) | (data[4] << 8) | data[5]
