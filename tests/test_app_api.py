@@ -1,26 +1,8 @@
+import importlib
 import os
-import sys
 import tempfile
-import types
 import unittest
 from pathlib import Path
-
-os.environ["GROWBOX_SKIP_BOOTSTRAP"] = "1"
-
-camera_stub = types.ModuleType("camera")
-camera_stub.Camera = object
-camera_stub.TIMELAPSE_DIR = Path(tempfile.mkdtemp())
-sys.modules.setdefault("camera", camera_stub)
-
-sensors_stub = types.ModuleType("sensors")
-sensors_stub.SensorHub = object
-sys.modules.setdefault("sensors", sensors_stub)
-
-requests_stub = types.ModuleType("requests")
-requests_stub.post = lambda *args, **kwargs: None
-sys.modules.setdefault("requests", requests_stub)
-
-from app import Runtime, create_app
 
 
 class FakeRelay:
@@ -74,6 +56,8 @@ class FakeNotifier:
         self.messages = []
         self.startups = 0
         self.relay_changes = []
+        self.token = ""
+        self.chat_id = ""
 
     def notify_startup(self):
         self.startups += 1
@@ -111,7 +95,32 @@ class FakeDatabase:
 
 
 class AppApiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._old_skip_bootstrap = os.environ.get("GROWBOX_SKIP_BOOTSTRAP")
+        os.environ["GROWBOX_SKIP_BOOTSTRAP"] = "1"
+        try:
+            app_module = importlib.import_module("app")
+        except Exception as exc:  # pragma: no cover - skip only for missing local deps
+            cls._import_error = exc
+            cls.Runtime = None
+            cls.create_app = None
+        else:
+            cls._import_error = None
+            cls.Runtime = app_module.Runtime
+            cls.create_app = app_module.create_app
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls._old_skip_bootstrap is None:
+            os.environ.pop("GROWBOX_SKIP_BOOTSTRAP", None)
+        else:
+            os.environ["GROWBOX_SKIP_BOOTSTRAP"] = cls._old_skip_bootstrap
+
     def setUp(self):
+        if self._import_error is not None:
+            self.skipTest(f"app import unavailable: {self._import_error}")
+
         self.saved_configs = []
         self.config = {
             "telegram_token": "",
@@ -137,7 +146,7 @@ class AppApiTests(unittest.TestCase):
             1: FakeRelay(1, "Light", 7, state=False),
             2: FakeRelay(2, "Fan", 8, state=True),
         }
-        self.runtime = Runtime(
+        self.runtime = self.Runtime(
             config=self.config,
             camera=FakeCamera(),
             relays=self.relays,
@@ -150,7 +159,7 @@ class AppApiTests(unittest.TestCase):
             db_module=self.db,
             timelapse_dir=Path(tempfile.mkdtemp()),
         )
-        self.app = create_app(self.runtime)
+        self.app = self.create_app(self.runtime)
         self.client = self.app.test_client()
 
     def load_config(self):

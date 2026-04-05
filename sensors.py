@@ -79,7 +79,7 @@ class ENS160:
 
 class ADS1115:
     REG_CONVERT = 0x00
-    REG_CONFIG  = 0x01
+    REG_CONFIG = 0x01
     MUX = {0: 0x4000, 1: 0x5000, 2: 0x6000, 3: 0x7000}
 
     def __init__(self, bus, addr: int = 0x48):
