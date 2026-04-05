@@ -50,7 +50,7 @@ def _conn():
 
 
 def insert_sensor_reading(data: dict) -> None:
-    soil  = data.get("soil", [])
+    soil = data.get("soil", [])
     soil0 = next((s["moisture_pct"] for s in soil if s["channel"] == 0), None)
     soil1 = next((s["moisture_pct"] for s in soil if s["channel"] == 1), None)
     with _conn() as conn:
@@ -87,8 +87,8 @@ def get_history(hours: float = 24, max_points: int = 400) -> dict:
         ).fetchall()
 
         if len(rows) > max_points:
-            step  = len(rows) / max_points
-            rows  = [rows[int(i * step)] for i in range(max_points)]
+            step = len(rows) / max_points
+            rows = [rows[int(i * step)] for i in range(max_points)]
 
         sensors = [dict(r) for r in rows]
 

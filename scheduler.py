@@ -14,13 +14,13 @@ class GrowboxScheduler:
     """
 
     def __init__(self, relays: dict, camera, notifier, config: dict, mode: dict):
-        self.relays   = relays        # {relay_id: Relay}
-        self.camera   = camera
+        self.relays = relays        # {relay_id: Relay}
+        self.camera = camera
         self.notifier = notifier
-        self.config   = config
-        self.mode     = mode          # shared {"auto": bool}
+        self.config = config
+        self.mode = mode          # shared {"auto": bool}
         self._running = False
-        self._thread  = None
+        self._thread = None
         self._last_minute: int = -1
         self._timelapse_counter: int = 0
 
@@ -28,7 +28,7 @@ class GrowboxScheduler:
 
     def start(self) -> None:
         self._running = True
-        self._thread  = threading.Thread(target=self._loop, daemon=True)
+        self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
         logger.info("Scheduler started")
 

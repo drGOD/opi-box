@@ -1,10 +1,4 @@
-import sys
-import types
 import unittest
-
-requests_stub = types.ModuleType("requests")
-requests_stub.post = lambda *args, **kwargs: None
-sys.modules.setdefault("requests", requests_stub)
 
 import telegram_bot
 from telegram_bot import TelegramNotifier
