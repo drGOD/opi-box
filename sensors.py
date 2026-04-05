@@ -45,8 +45,10 @@ class AHT21:
         if status & 0x80:
             raise RuntimeError("AHT21 is still busy")
         if (status & 0x18) != 0x18:
+            self.bus.write_i2c_block_data(self.addr, self.CMD_INIT[0], self.CMD_INIT[1:])
+            time.sleep(0.04)
             raise RuntimeError(f"AHT21 not calibrated: status=0x{status:02X}")
-        if self._crc8(data[:6]) != data[6]:
+        if self._crc8(data[1:6]) != data[6]:
             raise RuntimeError("AHT21 CRC mismatch")
 
         raw_hum = (data[1] << 12) | (data[2] << 4) | (data[3] >> 4)
