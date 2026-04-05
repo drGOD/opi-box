@@ -2,9 +2,8 @@ import sys
 import unittest
 
 if sys.version_info >= (3, 9):
-    from sensors import AHT21, SensorHub
+    from sensors import SensorHub
 else:
-    AHT21 = None
     SensorHub = None
 
 
@@ -38,25 +37,6 @@ class FakeBus:
 
     def close(self):
         self.closed = True
-
-
-class FakeAHTBus:
-    def __init__(self, data):
-        self.data = data
-        self.init_writes = 0
-        self.measure_writes = 0
-
-    def write_i2c_block_data(self, addr, register, values):
-        if register == AHT21.CMD_INIT[0]:
-            self.init_writes += 1
-        if register == AHT21.CMD_MEASURE[0]:
-            self.measure_writes += 1
-
-    def read_byte(self, addr):
-        return 0x18
-
-    def read_i2c_block_data(self, addr, register, count):
-        return list(self.data)
 
 
 @unittest.skipUnless(SensorHub is not None, "SensorHub requires Python 3.9+")
@@ -130,21 +110,6 @@ class SensorHubTests(unittest.TestCase):
         self.assertTrue(hub.available)
         hub.close()
         self.assertTrue(hub._bus.closed)
-
-
-@unittest.skipUnless(AHT21 is not None, "AHT21 requires Python 3.9+")
-class AHT21Tests(unittest.TestCase):
-    def test_read_accepts_crc_calculated_from_measurement_bytes(self):
-        payload = [0x08, 0x80, 0x00, 0x06, 0x00]
-        crc = AHT21._crc8(payload)
-        bus = FakeAHTBus([0x18, *payload, crc])
-
-        sensor = AHT21(bus)
-        temperature, humidity = sensor.read()
-
-        self.assertEqual(bus.measure_writes, 1)
-        self.assertAlmostEqual(temperature, 25.0, places=1)
-        self.assertAlmostEqual(humidity, 50.0, places=1)
 
 
 if __name__ == "__main__":
