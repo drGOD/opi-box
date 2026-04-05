@@ -79,6 +79,11 @@ class FakeSensorHub:
 class FakeScheduler:
     def __init__(self, config):
         self.config = config
+        self.relays = {}
+        self.relay_notify = None
+
+    def _check_humidity_control(self, now):
+        return None
 
 
 class FakeDatabase:
@@ -133,11 +138,20 @@ class AppApiTests(unittest.TestCase):
             "relays": [
                 {"id": 1, "name": "Light", "gpio_pin": 7, "active_low": True, "state": False},
                 {"id": 2, "name": "Fan", "gpio_pin": 8, "active_low": True, "state": True},
+                {"id": 3, "name": "Humidifier", "gpio_pin": 9, "active_low": True, "state": False},
             ],
             "schedules": [
                 {"relay_id": 1, "enabled": True, "on_time": "08:00", "off_time": "22:00"},
                 {"relay_id": 2, "enabled": False, "on_time": "09:00", "off_time": "21:00"},
+                {"relay_id": 3, "enabled": False, "on_time": "00:00", "off_time": "00:00"},
             ],
+            "humidity_control": {
+                "enabled": True,
+                "relay_id": 3,
+                "target_humidity": 65,
+                "hysteresis": 6,
+                "min_switch_interval_seconds": 180,
+            },
             "sensors": {"enabled": True},
         }
         self.db = FakeDatabase()
@@ -145,6 +159,7 @@ class AppApiTests(unittest.TestCase):
         self.relays = {
             1: FakeRelay(1, "Light", 7, state=False),
             2: FakeRelay(2, "Fan", 8, state=True),
+            3: FakeRelay(3, "Humidifier", 9, state=False),
         }
         self.runtime = self.Runtime(
             config=self.config,
@@ -167,6 +182,7 @@ class AppApiTests(unittest.TestCase):
             **self.config,
             "relays": [dict(item) for item in self.config["relays"]],
             "schedules": [dict(item) for item in self.config["schedules"]],
+            "humidity_control": dict(self.config["humidity_control"]),
             "sensors": dict(self.config["sensors"]),
         }
 
@@ -180,7 +196,8 @@ class AppApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertTrue(payload["ok"])
-        self.assertEqual(len(payload["relays"]), 2)
+        self.assertEqual(len(payload["relays"]), 3)
+        self.assertEqual(payload["humidity_control"]["relay_id"], 3)
         self.assertTrue(self.notifier.startups >= 1)
 
     def test_snapshot_endpoint_returns_jpeg(self):
@@ -224,6 +241,7 @@ class AppApiTests(unittest.TestCase):
             json={
                 "telegram_token": "abc",
                 "telegram_chat_id": "42",
+                "humidity_control": {"target_humidity": 70},
                 "sensors": {"read_interval_seconds": 10},
             },
         )
@@ -231,6 +249,7 @@ class AppApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.runtime.notifier.token, "abc")
         self.assertEqual(self.runtime.notifier.chat_id, "42")
+        self.assertEqual(self.runtime.config["humidity_control"]["target_humidity"], 70)
         self.assertEqual(self.runtime.config["sensors"]["read_interval_seconds"], 10)
 
     def test_history_endpoint_clamps_hours(self):

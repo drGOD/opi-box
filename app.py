@@ -80,7 +80,14 @@ def build_runtime(
     if start_background and hasattr(sensor_hub, "start"):
         sensor_hub.start()
 
-    scheduler = scheduler_cls(relays, camera, notifier, config, mode)
+    scheduler = scheduler_cls(
+        relays,
+        camera,
+        notifier,
+        config,
+        mode,
+        sensor_hub=sensor_hub,
+    )
     if start_background and hasattr(scheduler, "start"):
         scheduler.start()
 
@@ -108,8 +115,11 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
         """Return {relay_id: should_be_on} based on current time and schedule."""
         cur = tuple(map(int, datetime.now().strftime("%H:%M").split(":")))
         expected: Dict[int, bool] = {}
+        humidity_relay_id = runtime.config.get("humidity_control", {}).get("relay_id")
         for sched in runtime.config.get("schedules", []):
             if not sched.get("enabled"):
+                continue
+            if sched.get("relay_id") == humidity_relay_id:
                 continue
             on = tuple(map(int, sched.get("on_time", "00:00").split(":")))
             off = tuple(map(int, sched.get("off_time", "00:00").split(":")))
@@ -120,8 +130,35 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
             expected[sched["relay_id"]] = should_on
         return expected
 
+    def humidity_control_status() -> dict:
+        control = runtime.config.get("humidity_control", {})
+        relay_id = control.get("relay_id")
+        latest = getattr(runtime.sensor_hub, "latest", None) or {}
+        humidity = latest.get("air_humidity")
+        target = float(control.get("target_humidity", 65.0))
+        hysteresis = max(0.0, float(control.get("hysteresis", 6.0)))
+        lower_bound = target - hysteresis / 2.0
+        upper_bound = target + hysteresis / 2.0
+
+        desired_state = None
+        if humidity is not None:
+            if humidity <= lower_bound:
+                desired_state = True
+            elif humidity >= upper_bound:
+                desired_state = False
+
+        return {
+            "enabled": bool(control.get("enabled")),
+            "relay_id": relay_id,
+            "current_humidity": humidity,
+            "target_humidity": target,
+            "hysteresis": hysteresis,
+            "lower_bound": lower_bound,
+            "upper_bound": upper_bound,
+            "desired_state": desired_state,
+        }
+
     def persist_relay_state(relay: Relay, event_mode: str = "manual") -> None:
-        """Persist relay state to config.json, log to DB, send Telegram notification."""
         runtime.notifier.notify_relay_change(relay)
         runtime.db_module.insert_relay_event(relay.id, relay.name, relay.state, event_mode)
         cfg = runtime.config_loader()
@@ -130,12 +167,14 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
                 relay_cfg["state"] = relay.state
         runtime.config_saver(cfg)
 
+    runtime.scheduler.relay_notify = lambda relay_obj: persist_relay_state(relay_obj, "auto")
+
     def apply_auto_mode() -> None:
-        """Apply schedule to relays immediately (called on startup / auto-mode restore)."""
         for relay_id, should_on in schedule_expected_states().items():
             relay = runtime.relays.get(relay_id)
             if relay is not None:
                 relay.set(should_on, notify=lambda relay_obj: persist_relay_state(relay_obj, "auto"))
+        runtime.scheduler._check_humidity_control(datetime.now())
         logger.info("Auto mode applied")
 
     apply_auto_mode()
@@ -148,16 +187,22 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
     @app.route("/api/status")
     def api_status():
         expected = schedule_expected_states()
+        humidity_status = humidity_control_status()
         relay_list = []
         for relay in runtime.relays.values():
             relay_data = relay.to_dict()
             relay_data["schedule_expected"] = expected.get(relay.id)
+            relay_data["humidity_controlled"] = relay.id == humidity_status["relay_id"] and humidity_status["enabled"]
+            relay_data["humidity_expected"] = (
+                humidity_status["desired_state"] if relay.id == humidity_status["relay_id"] else None
+            )
             relay_list.append(relay_data)
         return jsonify({
             "ok": True,
             "camera": runtime.camera.is_available,
             "relays": relay_list,
             "auto_mode": runtime.mode["auto"],
+            "humidity_control": humidity_status,
             "time": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
             "timelapse_enabled": runtime.config.get("timelapse_enabled", True),
             "timelapse_interval": runtime.config.get("timelapse_interval_minutes", 30),
@@ -244,6 +289,7 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
             "camera_device": cfg.get("camera_device", 0),
             "gpio_chip": cfg.get("gpio_chip", "gpiochip0"),
             "sensors": cfg.get("sensors", {}),
+            "humidity_control": cfg.get("humidity_control", {}),
             "relays": [
                 {
                     "id": relay_cfg["id"],
@@ -269,6 +315,8 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
                 cfg[key] = data[key]
         if "sensors" in data and isinstance(data["sensors"], dict):
             cfg.setdefault("sensors", {}).update(data["sensors"])
+        if "humidity_control" in data and isinstance(data["humidity_control"], dict):
+            cfg.setdefault("humidity_control", {}).update(data["humidity_control"])
         runtime.config_saver(cfg)
         runtime.config.update(cfg)
         runtime.notifier.token = cfg["telegram_token"]
@@ -292,10 +340,12 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
             relay_cfg["active_low"] = bool(updated.get("active_low", relay_cfg.get("active_low", True)))
         runtime.config_saver(cfg)
         runtime.config.update(cfg)
-        for relay in runtime.relays.values():
+        old_relays = runtime.relays
+        for relay in old_relays.values():
             relay.close()
+        runtime.relays = {}
         for relay_cfg in cfg["relays"]:
-            old = runtime.relays.get(relay_cfg["id"])
+            old = old_relays.get(relay_cfg["id"])
             new_relay = Relay(
                 relay_id=relay_cfg["id"],
                 name=relay_cfg["name"],
@@ -305,6 +355,7 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
             )
             new_relay.state = old.state if old else relay_cfg.get("state", False)
             runtime.relays[relay_cfg["id"]] = new_relay
+        runtime.scheduler.relays = runtime.relays
         return jsonify({"ok": True})
 
     @app.route("/api/version")
@@ -328,7 +379,7 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
     @app.route("/api/telegram/test", methods=["POST"])
     def test_telegram():
         ok = runtime.notifier.send_message(
-            "рџЊ± <b>GrowBox</b> вЂ” С‚РµСЃС‚ СѓРІРµРґРѕРјР»РµРЅРёР№ СЂР°Р±РѕС‚Р°РµС‚!"
+            "СЂСџРЉВ± <b>GrowBox</b> РІР‚вЂќ РЎвЂљР ВµРЎРѓРЎвЂљ РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘Р в„– РЎР‚Р В°Р В±Р С•РЎвЂљР В°Р ВµРЎвЂљ!"
         )
         return jsonify({"ok": ok})
 

@@ -20,7 +20,8 @@ class ConfigTests(unittest.TestCase):
 
         self.assertTrue(config.CONFIG_FILE.exists())
         self.assertEqual(loaded["gpio_chip"], config.DEFAULT_CONFIG["gpio_chip"])
-        self.assertEqual(loaded["relays"][0]["id"], config.DEFAULT_CONFIG["relays"][0]["id"])
+        self.assertEqual([relay["id"] for relay in loaded["relays"]], [1, 2, 3])
+        self.assertEqual(loaded["humidity_control"]["relay_id"], 3)
 
     def test_save_and_load_config_roundtrip_top_level_overrides(self):
         payload = {
@@ -35,7 +36,22 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(loaded["telegram_token"], "token")
         self.assertEqual(loaded["camera_device"], 3)
-        self.assertEqual(loaded["sensors"], {"enabled": False})
+        self.assertEqual(loaded["sensors"]["enabled"], False)
+        self.assertIn("read_interval_seconds", loaded["sensors"])
+
+    def test_load_config_appends_missing_default_relay_and_humidity_control(self):
+        config.save_config({
+            "relays": [
+                {"id": 1, "name": "Light", "gpio_pin": 7, "active_low": True, "state": False},
+                {"id": 2, "name": "Fan", "gpio_pin": 8, "active_low": True, "state": False},
+            ],
+            "schedules": [],
+        })
+
+        loaded = config.load_config()
+
+        self.assertEqual([relay["id"] for relay in loaded["relays"]], [1, 2, 3])
+        self.assertEqual(loaded["humidity_control"]["relay_id"], 3)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from pathlib import Path
 
 CONFIG_FILE = Path(__file__).parent / "config.json"
@@ -12,32 +13,74 @@ DEFAULT_CONFIG = {
     "camera_device": 1,  # 0 = cedrus HW decoder on OPi Zero 3, camera starts at 1
     "gpio_chip": "gpiochip0",
     "relays": [
-        {"id": 1, "name": "Свет",       "gpio_pin": 7, "active_low": True, "state": False},
-        {"id": 2, "name": "Вентиляция", "gpio_pin": 8, "active_low": True, "state": False},
+        {"id": 1, "name": "РЎРІРµС‚", "gpio_pin": 7, "active_low": True, "state": False},
+        {"id": 2, "name": "Р’РµРЅС‚РёР»СЏС†РёСЏ", "gpio_pin": 8, "active_low": True, "state": False},
+        {"id": 3, "name": "РЈРІР»Р°Р¶РЅРёС‚РµР»СЊ", "gpio_pin": 9, "active_low": True, "state": False},
     ],
     "schedules": [
         {"relay_id": 1, "enabled": True, "on_time": "08:00", "off_time": "22:00"},
         {"relay_id": 2, "enabled": True, "on_time": "08:00", "off_time": "22:00"},
+        {"relay_id": 3, "enabled": False, "on_time": "00:00", "off_time": "00:00"},
     ],
+    "humidity_control": {
+        "enabled": False,
+        "relay_id": 3,
+        "target_humidity": 65.0,
+        "hysteresis": 6.0,
+        "min_switch_interval_seconds": 180,
+    },
     "sensors": {
-        "enabled":              True,
-        "i2c_bus":              2,
+        "enabled": True,
+        "i2c_bus": 2,
         "read_interval_seconds": 30,
-        "soil_dry":             [26000, 26000],
-        "soil_wet":             [13000, 13000],
+        "soil_dry": [26000, 26000],
+        "soil_wet": [13000, 13000],
     },
 }
+
+
+def _merge_relay_lists(data: dict) -> list:
+    relays = [dict(item) for item in data.get("relays", [])]
+    existing = {item.get("id") for item in relays}
+    for item in DEFAULT_CONFIG["relays"]:
+        if item["id"] not in existing:
+            relays.append(dict(item))
+    return relays
+
+
+def _merge_schedule_lists(data: dict) -> list:
+    schedules = [dict(item) for item in data.get("schedules", [])]
+    existing = {item.get("relay_id") for item in schedules}
+    for item in DEFAULT_CONFIG["schedules"]:
+        if item["relay_id"] not in existing:
+            schedules.append(dict(item))
+    return schedules
+
+
+def _merge_config(data: dict) -> dict:
+    merged = deepcopy(DEFAULT_CONFIG)
+    merged.update(data)
+
+    sensors = deepcopy(DEFAULT_CONFIG["sensors"])
+    sensors.update(data.get("sensors", {}))
+    merged["sensors"] = sensors
+
+    humidity_control = deepcopy(DEFAULT_CONFIG["humidity_control"])
+    humidity_control.update(data.get("humidity_control", {}))
+    merged["humidity_control"] = humidity_control
+
+    merged["relays"] = _merge_relay_lists(data)
+    merged["schedules"] = _merge_schedule_lists(data)
+    return merged
 
 
 def load_config() -> dict:
     if not CONFIG_FILE.exists():
         save_config(DEFAULT_CONFIG)
-        return DEFAULT_CONFIG.copy()
+        return _merge_config(DEFAULT_CONFIG)
     with open(CONFIG_FILE, encoding="utf-8") as f:
         data = json.load(f)
-    merged = DEFAULT_CONFIG.copy()
-    merged.update(data)
-    return merged
+    return _merge_config(data)
 
 
 def save_config(cfg: dict) -> None:

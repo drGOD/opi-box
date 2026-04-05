@@ -94,6 +94,9 @@ function renderAutoModeBanner(status) {
     if (exp != null && r.state !== exp) {
       parts.push(`${r.name}: по расписанию ${exp ? 'ВКЛ' : 'ВЫКЛ'}, сейчас ${r.state ? 'ВКЛ' : 'ВЫКЛ'}`);
     }
+    if (r.humidity_controlled && r.humidity_expected != null && r.state !== r.humidity_expected) {
+      parts.push(`${r.name}: по влажности ${r.humidity_expected ? 'ВКЛ' : 'ВЫКЛ'}, сейчас ${r.state ? 'ВКЛ' : 'ВЫКЛ'}`);
+    }
   });
   document.getElementById('manual-banner-desc').textContent =
     parts.length ? parts.join(' · ') : 'Реле управляются вручную';
@@ -324,6 +327,7 @@ loadCharts();
 function relayIcon(name) {
   if (/свет/i.test(name))   return '💡';
   if (/вент/i.test(name))   return '💨';
+  if (/увлаж|humid/i.test(name)) return '💧';
   return '🔌';
 }
 
@@ -339,6 +343,7 @@ function renderRelayCards(relays) {
         <div class="relay-icon">${relayIcon(relay.name)}</div>
         <div class="relay-name">${relay.name}</div>
         <div class="relay-state"></div>
+        <div class="relay-mode-note"></div>
         ${relay.mock ? '<div class="relay-mock">GPIO mock</div>' : ''}
       `;
       card.addEventListener('click', () => toggleRelay(relay.id));
@@ -347,6 +352,7 @@ function renderRelayCards(relays) {
     const on = relay.state;
     card.className = `card relay-card ${on ? 'on' : 'off'}`;
     card.querySelector('.relay-state').textContent = on ? 'ВКЛ' : 'ВЫКЛ';
+    card.querySelector('.relay-mode-note').textContent = relay.humidity_controlled ? 'Авто: по влажности' : '';
   });
 }
 
@@ -442,6 +448,7 @@ function renderSchedule() {
   if (statusData) statusData.relays.forEach(r => { relayMap[r.id] = r; });
 
   scheduleData.forEach((sched, i) => {
+    if (relayMap[sched.relay_id]?.humidity_controlled) return;
     const name = relayMap[sched.relay_id]?.name ?? `Реле ${sched.relay_id}`;
     const row  = document.createElement('div');
     row.className = 'sched-row';
@@ -494,6 +501,11 @@ async function loadSettings() {
     document.getElementById('s-tl-interval').value     = s.timelapse_interval_minutes ?? 30;
     document.getElementById('s-cam-device').value      = s.camera_device ?? 0;
     document.getElementById('s-gpio-chip').value       = s.gpio_chip ?? 'gpiochip0';
+    const hc = s.humidity_control ?? {};
+    document.getElementById('s-hum-enabled').checked   = hc.enabled ?? false;
+    document.getElementById('s-hum-target').value      = hc.target_humidity ?? 65;
+    document.getElementById('s-hum-band').value        = hc.hysteresis ?? 6;
+    document.getElementById('s-hum-min-switch').value  = hc.min_switch_interval_seconds ?? 180;
     const sc = s.sensors ?? {};
     document.getElementById('s-sens-enabled').checked  = sc.enabled ?? true;
     document.getElementById('s-sens-bus').value        = sc.i2c_bus ?? 2;
@@ -505,8 +517,23 @@ async function loadSettings() {
     document.getElementById('s-soil1-dry').value = dry[1];
     document.getElementById('s-soil1-wet').value = wet[1];
     renderRelaySettings(s.relays ?? []);
+    renderHumidityRelayOptions(s.relays ?? [], hc.relay_id ?? 3);
   } catch {
     showToast('Ошибка загрузки настроек', 'err');
+  }
+}
+
+function renderHumidityRelayOptions(relays, selectedId) {
+  const select = document.getElementById('s-hum-relay');
+  select.innerHTML = '';
+  relays.forEach(relay => {
+    const option = document.createElement('option');
+    option.value = relay.id;
+    option.textContent = `${relay.id}: ${relay.name}`;
+    select.appendChild(option);
+  });
+  if (selectedId != null) {
+    select.value = String(selectedId);
   }
 }
 
@@ -567,6 +594,13 @@ async function saveSettings() {
     timelapse_interval_minutes: +document.getElementById('s-tl-interval').value,
     camera_device:              +document.getElementById('s-cam-device').value,
     gpio_chip:                  document.getElementById('s-gpio-chip').value.trim(),
+    humidity_control: {
+      enabled:                     document.getElementById('s-hum-enabled').checked,
+      relay_id:                    +document.getElementById('s-hum-relay').value,
+      target_humidity:             +document.getElementById('s-hum-target').value,
+      hysteresis:                  +document.getElementById('s-hum-band').value,
+      min_switch_interval_seconds: +document.getElementById('s-hum-min-switch').value,
+    },
     sensors: {
       enabled:               document.getElementById('s-sens-enabled').checked,
       i2c_bus:               +document.getElementById('s-sens-bus').value,
