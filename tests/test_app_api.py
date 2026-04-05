@@ -108,7 +108,7 @@ class AppApiTests(unittest.TestCase):
         else:
             cls._import_error = None
             cls.Runtime = app_module.Runtime
-            cls.create_app = app_module.create_app
+            cls.create_app = staticmethod(app_module.create_app)
 
     @classmethod
     def tearDownClass(cls):
