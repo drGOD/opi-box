@@ -5,9 +5,6 @@ from pathlib import Path
 CONFIG_FILE = Path(__file__).parent / "config.json"
 
 DEFAULT_CONFIG = {
-    "telegram_token": "",
-    "telegram_chat_id": "",
-    "telegram_timelapse": True,
     "timelapse_interval_minutes": 30,
     "timelapse_enabled": True,
     "camera_device": 1,  # 0 = cedrus HW decoder on OPi Zero 3, camera starts at 1
@@ -19,7 +16,7 @@ DEFAULT_CONFIG = {
     ],
     "schedules": [
         {"relay_id": 1, "enabled": True, "on_time": "08:00", "off_time": "22:00"},
-        {"relay_id": 2, "enabled": True, "on_time": "08:00", "off_time": "22:00"},
+        {"relay_id": 2, "enabled": False, "on_time": "08:00", "off_time": "22:00"},
         {"relay_id": 3, "enabled": False, "on_time": "00:00", "off_time": "00:00"},
     ],
     "humidity_control": {
@@ -27,6 +24,16 @@ DEFAULT_CONFIG = {
         "relay_id": 3,
         "target_humidity": 65.0,
         "hysteresis": 6.0,
+        "min_switch_interval_seconds": 180,
+    },
+    "climate_ventilation": {
+        "enabled": True,
+        "relay_id": 2,
+        "max_humidity": 80.0,
+        "min_humidity": 40.0,
+        "max_temperature": 35.0,
+        "min_temperature": 18.0,
+        "max_co2_ppm": 1500,
         "min_switch_interval_seconds": 180,
     },
     "sensors": {

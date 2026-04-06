@@ -253,6 +253,9 @@ function initCharts() {
       { label: 'Реле 2', data: [], borderColor: '#60a5fa',
         backgroundColor: 'rgba(96,165,250,0.08)', fill: true,
         stepped: true, pointRadius: 0, borderWidth: 2 },
+      { label: 'Реле 3', data: [], borderColor: '#34d399',
+        backgroundColor: 'rgba(52,211,153,0.08)', fill: true,
+        stepped: true, pointRadius: 0, borderWidth: 2 },
     ]},
     options: { ...CHART_DEFAULTS, scales: { x: CHART_DEFAULTS.scales.x,
       y: { ...yScale('#94a3b8', 'left'), min: 0, max: 1,
@@ -494,9 +497,6 @@ async function saveSchedule() {
 async function loadSettings() {
   try {
     const s  = await apiFetch('/api/settings');
-    document.getElementById('s-tg-token').value        = s.telegram_token ?? '';
-    document.getElementById('s-tg-chat').value         = s.telegram_chat_id ?? '';
-    document.getElementById('s-tg-timelapse').checked  = s.telegram_timelapse ?? true;
     document.getElementById('s-tl-enabled').checked    = s.timelapse_enabled ?? true;
     document.getElementById('s-tl-interval').value     = s.timelapse_interval_minutes ?? 30;
     document.getElementById('s-cam-device').value      = s.camera_device ?? 0;
@@ -518,6 +518,15 @@ async function loadSettings() {
     document.getElementById('s-soil1-wet').value = wet[1];
     renderRelaySettings(s.relays ?? []);
     renderHumidityRelayOptions(s.relays ?? [], hc.relay_id ?? 3);
+    const cv = s.climate_ventilation ?? {};
+    document.getElementById('s-cv-enabled').checked    = cv.enabled ?? false;
+    document.getElementById('s-cv-max-hum').value      = cv.max_humidity ?? 80;
+    document.getElementById('s-cv-min-hum').value      = cv.min_humidity ?? 40;
+    document.getElementById('s-cv-max-temp').value     = cv.max_temperature ?? 35;
+    document.getElementById('s-cv-min-temp').value     = cv.min_temperature ?? 18;
+    document.getElementById('s-cv-max-co2').value      = cv.max_co2_ppm ?? 1500;
+    document.getElementById('s-cv-min-switch').value   = cv.min_switch_interval_seconds ?? 180;
+    renderClimateVentRelayOptions(s.relays ?? [], cv.relay_id ?? 2);
   } catch {
     showToast('Ошибка загрузки настроек', 'err');
   }
@@ -587,9 +596,6 @@ async function saveRelaySettings() {
 
 async function saveSettings() {
   const payload = {
-    telegram_token:             document.getElementById('s-tg-token').value.trim(),
-    telegram_chat_id:           document.getElementById('s-tg-chat').value.trim(),
-    telegram_timelapse:         document.getElementById('s-tg-timelapse').checked,
     timelapse_enabled:          document.getElementById('s-tl-enabled').checked,
     timelapse_interval_minutes: +document.getElementById('s-tl-interval').value,
     camera_device:              +document.getElementById('s-cam-device').value,
@@ -610,6 +616,16 @@ async function saveSettings() {
       soil_wet: [+document.getElementById('s-soil0-wet').value,
                  +document.getElementById('s-soil1-wet').value],
     },
+    climate_ventilation: {
+      enabled:                     document.getElementById('s-cv-enabled').checked,
+      relay_id:                    +document.getElementById('s-cv-relay').value,
+      max_humidity:                +document.getElementById('s-cv-max-hum').value,
+      min_humidity:                +document.getElementById('s-cv-min-hum').value,
+      max_temperature:             +document.getElementById('s-cv-max-temp').value,
+      min_temperature:             +document.getElementById('s-cv-min-temp').value,
+      max_co2_ppm:                 +document.getElementById('s-cv-max-co2').value,
+      min_switch_interval_seconds: +document.getElementById('s-cv-min-switch').value,
+    },
   };
   try {
     await apiFetch('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
@@ -619,11 +635,16 @@ async function saveSettings() {
   }
 }
 
-async function testTelegram() {
-  try {
-    const r = await apiFetch('/api/telegram/test', { method: 'POST', body: '{}' });
-    showToast(r.ok ? 'Сообщение отправлено!' : 'Ошибка отправки', r.ok ? 'ok' : 'err');
-  } catch {
-    showToast('Ошибка Telegram', 'err');
+function renderClimateVentRelayOptions(relays, selectedId) {
+  const select = document.getElementById('s-cv-relay');
+  select.innerHTML = '';
+  relays.forEach(relay => {
+    const option = document.createElement('option');
+    option.value = relay.id;
+    option.textContent = `${relay.id}: ${relay.name}`;
+    select.appendChild(option);
+  });
+  if (selectedId != null) {
+    select.value = String(selectedId);
   }
 }

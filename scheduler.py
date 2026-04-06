@@ -12,6 +12,8 @@ class GrowboxScheduler:
     Background thread that:
       - Enforces relay schedules in auto mode
       - Controls a humidifier relay from air humidity with hysteresis
+      - Controls ventilation relay based on climate (humidity/temp/CO2)
+      - Periodically re-syncs relay GPIO states
       - Triggers timelapse snapshots at the configured interval
     """
 
@@ -19,7 +21,6 @@ class GrowboxScheduler:
         self,
         relays: dict,
         camera,
-        notifier,
         config: dict,
         mode: dict,
         sensor_hub=None,
@@ -27,16 +28,17 @@ class GrowboxScheduler:
     ):
         self.relays = relays
         self.camera = camera
-        self.notifier = notifier
         self.config = config
         self.mode = mode
         self.sensor_hub = sensor_hub
-        self.relay_notify = relay_notify or self._notify_relay
+        self.relay_notify = relay_notify or (lambda relay: None)
         self._running = False
         self._thread = None
         self._last_minute: int = -1
         self._timelapse_counter: int = 0
         self._last_humidity_switch_ts: float = 0.0
+        self._last_climate_switch_ts: float = 0.0
+        self._last_resync_minute: int = -1
 
     def start(self) -> None:
         self._running = True
@@ -56,17 +58,22 @@ class GrowboxScheduler:
                 self._check_relay_schedules(now)
                 self._tick_timelapse()
             self._check_humidity_control(now)
+            self._check_climate_ventilation(now)
+            self._resync_relay_states(now)
             time.sleep(20)
 
     def _check_relay_schedules(self, now: datetime) -> None:
         if not self.mode.get("auto", True):
             return
         humidity_relay_id = self.config.get("humidity_control", {}).get("relay_id")
+        climate_relay_id = self.config.get("climate_ventilation", {}).get("relay_id")
         current_hm = now.strftime("%H:%M")
         for sched in self.config.get("schedules", []):
             if not sched.get("enabled"):
                 continue
             if sched.get("relay_id") == humidity_relay_id:
+                continue
+            if sched.get("relay_id") == climate_relay_id:
                 continue
             relay = self.relays.get(sched["relay_id"])
             if relay is None:
@@ -125,16 +132,95 @@ class GrowboxScheduler:
             hysteresis,
         )
 
-    def _notify_relay(self, relay) -> None:
-        self.notifier.notify_relay_change(relay)
-        from database import insert_relay_event
-        insert_relay_event(relay.id, relay.name, relay.state, "auto")
-        from config import load_config, save_config
-        cfg = load_config()
-        for r in cfg["relays"]:
-            if r["id"] == relay.id:
-                r["state"] = relay.state
-        save_config(cfg)
+    def _check_climate_ventilation(self, now: datetime) -> None:
+        """Turn ventilation ON/OFF based on climate sensor readings."""
+        if not self.mode.get("auto", True):
+            return
+
+        control = self.config.get("climate_ventilation", {})
+        if not control.get("enabled"):
+            return
+
+        relay = self.relays.get(control.get("relay_id"))
+        if relay is None:
+            return
+
+        latest = getattr(self.sensor_hub, "latest", None) or {}
+        humidity = latest.get("air_humidity")
+        temperature = latest.get("temperature")
+        co2 = latest.get("eco2_ppm")
+
+        # No sensor data at all — do nothing
+        if humidity is None and temperature is None and co2 is None:
+            return
+
+        max_humidity = float(control.get("max_humidity", 80.0))
+        min_humidity = float(control.get("min_humidity", 40.0))
+        max_temperature = float(control.get("max_temperature", 35.0))
+        min_temperature = float(control.get("min_temperature", 18.0))
+        max_co2 = int(control.get("max_co2_ppm", 1500))
+        min_interval = max(0, int(control.get("min_switch_interval_seconds", 180)))
+
+        # Emergency ON: any parameter above max threshold
+        needs_on = False
+        if humidity is not None and humidity > max_humidity:
+            needs_on = True
+        if temperature is not None and temperature > max_temperature:
+            needs_on = True
+        if co2 is not None and co2 > max_co2:
+            needs_on = True
+
+        # Force OFF: all available readings below min thresholds (too cold/dry)
+        all_below = True
+        if humidity is not None:
+            if humidity >= min_humidity:
+                all_below = False
+        if temperature is not None:
+            if temperature >= min_temperature:
+                all_below = False
+        if co2 is not None:
+            if co2 >= max_co2:
+                all_below = False
+
+        if needs_on:
+            desired_state = True
+        elif all_below:
+            desired_state = False
+        else:
+            return  # inside normal range, keep current state
+
+        if desired_state == relay.state:
+            return
+
+        now_ts = now.timestamp()
+        if self._last_climate_switch_ts and now_ts - self._last_climate_switch_ts < min_interval:
+            return
+
+        relay.set(desired_state, notify=self.relay_notify)
+        self._last_climate_switch_ts = now_ts
+        logger.info(
+            "Climate ventilation: %s -> %s (hum=%s, temp=%s, co2=%s)",
+            relay.name,
+            "ON" if desired_state else "OFF",
+            f"{humidity:.1f}%" if humidity is not None else "N/A",
+            f"{temperature:.1f}C" if temperature is not None else "N/A",
+            f"{co2}ppm" if co2 is not None else "N/A",
+        )
+
+    def _resync_relay_states(self, now: datetime) -> None:
+        """Every 15 minutes, re-apply GPIO state for all relays to prevent drift."""
+        if not self.mode.get("auto", True):
+            return
+        minute_of_day = now.hour * 60 + now.minute
+        # Trigger every 15 minutes (0, 15, 30, 45)
+        resync_slot = minute_of_day // 15
+        if resync_slot == self._last_resync_minute:
+            return
+        self._last_resync_minute = resync_slot
+        for relay in self.relays.values():
+            if hasattr(relay, "_apply"):
+                relay._apply()
+        logger.info("Relay GPIO states re-synced")
 
     def _tick_timelapse(self) -> None:
         if not self.config.get("timelapse_enabled", True):
@@ -148,9 +234,5 @@ class GrowboxScheduler:
             path = self.camera.save_timelapse_frame()
             if path:
                 logger.info("Timelapse frame saved: %s", path)
-                if self.config.get("telegram_timelapse", True):
-                    snap = self.camera.get_snapshot()
-                    if snap:
-                        self.notifier.notify_timelapse(snap)
         except Exception as exc:
             logger.error("Timelapse error: %s", exc)

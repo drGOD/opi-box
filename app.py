@@ -15,7 +15,6 @@ from config import load_config, save_config
 from relay import Relay
 from scheduler import GrowboxScheduler
 from sensors import SensorHub
-from telegram_bot import TelegramNotifier
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,7 +29,6 @@ class Runtime:
     camera: object
     relays: dict
     mode: dict
-    notifier: object
     sensor_hub: object
     scheduler: object
     config_loader: Callable[[], dict]
@@ -48,7 +46,6 @@ def build_runtime(
     relay_cls=Relay,
     scheduler_cls=GrowboxScheduler,
     sensor_hub_cls=SensorHub,
-    notifier_cls=TelegramNotifier,
     timelapse_dir: Path = TIMELAPSE_DIR,
     start_background: bool = True,
 ) -> Runtime:
@@ -68,14 +65,11 @@ def build_runtime(
             active_low=relay_cfg.get("active_low", True),
             gpio_chip=config.get("gpio_chip", "gpiochip0"),
         )
-        relay.state = relay_cfg.get("state", False)
+        desired = relay_cfg.get("state", False)
+        relay.set(desired)
         relays[relay_cfg["id"]] = relay
 
     mode = {"auto": True}
-    notifier = notifier_cls(
-        token=config.get("telegram_token", ""),
-        chat_id=config.get("telegram_chat_id", ""),
-    )
     sensor_hub = sensor_hub_cls(config, on_reading=db_module.insert_sensor_reading)
     if start_background and hasattr(sensor_hub, "start"):
         sensor_hub.start()
@@ -83,7 +77,6 @@ def build_runtime(
     scheduler = scheduler_cls(
         relays,
         camera,
-        notifier,
         config,
         mode,
         sensor_hub=sensor_hub,
@@ -96,7 +89,6 @@ def build_runtime(
         camera=camera,
         relays=relays,
         mode=mode,
-        notifier=notifier,
         sensor_hub=sensor_hub,
         scheduler=scheduler,
         config_loader=config_loader,
@@ -116,10 +108,13 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
         cur = tuple(map(int, datetime.now().strftime("%H:%M").split(":")))
         expected: Dict[int, bool] = {}
         humidity_relay_id = runtime.config.get("humidity_control", {}).get("relay_id")
+        climate_relay_id = runtime.config.get("climate_ventilation", {}).get("relay_id")
         for sched in runtime.config.get("schedules", []):
             if not sched.get("enabled"):
                 continue
             if sched.get("relay_id") == humidity_relay_id:
+                continue
+            if sched.get("relay_id") == climate_relay_id:
                 continue
             on = tuple(map(int, sched.get("on_time", "00:00").split(":")))
             off = tuple(map(int, sched.get("off_time", "00:00").split(":")))
@@ -159,7 +154,6 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
         }
 
     def persist_relay_state(relay: Relay, event_mode: str = "manual") -> None:
-        runtime.notifier.notify_relay_change(relay)
         runtime.db_module.insert_relay_event(relay.id, relay.name, relay.state, event_mode)
         cfg = runtime.config_loader()
         for relay_cfg in cfg["relays"]:
@@ -175,10 +169,10 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
             if relay is not None:
                 relay.set(should_on, notify=lambda relay_obj: persist_relay_state(relay_obj, "auto"))
         runtime.scheduler._check_humidity_control(datetime.now())
+        runtime.scheduler._check_climate_ventilation(datetime.now())
         logger.info("Auto mode applied")
 
     apply_auto_mode()
-    runtime.notifier.notify_startup()
 
     @app.route("/")
     def index():
@@ -281,15 +275,13 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
     def get_settings():
         cfg = runtime.config_loader()
         return jsonify({
-            "telegram_token": cfg.get("telegram_token", ""),
-            "telegram_chat_id": cfg.get("telegram_chat_id", ""),
-            "telegram_timelapse": cfg.get("telegram_timelapse", True),
             "timelapse_enabled": cfg.get("timelapse_enabled", True),
             "timelapse_interval_minutes": cfg.get("timelapse_interval_minutes", 30),
             "camera_device": cfg.get("camera_device", 0),
             "gpio_chip": cfg.get("gpio_chip", "gpiochip0"),
             "sensors": cfg.get("sensors", {}),
             "humidity_control": cfg.get("humidity_control", {}),
+            "climate_ventilation": cfg.get("climate_ventilation", {}),
             "relays": [
                 {
                     "id": relay_cfg["id"],
@@ -306,7 +298,6 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
         data = request.get_json(silent=True) or {}
         cfg = runtime.config_loader()
         allowed = [
-            "telegram_token", "telegram_chat_id", "telegram_timelapse",
             "timelapse_enabled", "timelapse_interval_minutes",
             "camera_device", "gpio_chip",
         ]
@@ -317,10 +308,10 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
             cfg.setdefault("sensors", {}).update(data["sensors"])
         if "humidity_control" in data and isinstance(data["humidity_control"], dict):
             cfg.setdefault("humidity_control", {}).update(data["humidity_control"])
+        if "climate_ventilation" in data and isinstance(data["climate_ventilation"], dict):
+            cfg.setdefault("climate_ventilation", {}).update(data["climate_ventilation"])
         runtime.config_saver(cfg)
         runtime.config.update(cfg)
-        runtime.notifier.token = cfg["telegram_token"]
-        runtime.notifier.chat_id = cfg["telegram_chat_id"]
         runtime.scheduler.config = cfg
         return jsonify({"ok": True})
 
@@ -353,7 +344,8 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
                 active_low=relay_cfg.get("active_low", True),
                 gpio_chip=cfg.get("gpio_chip", "gpiochip0"),
             )
-            new_relay.state = old.state if old else relay_cfg.get("state", False)
+            desired = old.state if old else relay_cfg.get("state", False)
+            new_relay.set(desired)
             runtime.relays[relay_cfg["id"]] = new_relay
         runtime.scheduler.relays = runtime.relays
         return jsonify({"ok": True})
@@ -375,13 +367,6 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
             return jsonify({"commit": commit + ("-dev" if dirty else "")})
         except Exception:
             return jsonify({"commit": "unknown"})
-
-    @app.route("/api/telegram/test", methods=["POST"])
-    def test_telegram():
-        ok = runtime.notifier.send_message(
-            "СЂСџРЉВ± <b>GrowBox</b> РІР‚вЂќ РЎвЂљР ВµРЎРѓРЎвЂљ РЎС“Р Р†Р ВµР Т‘Р С•Р СР В»Р ВµР Р…Р С‘Р в„– РЎР‚Р В°Р В±Р С•РЎвЂљР В°Р ВµРЎвЂљ!"
-        )
-        return jsonify({"ok": ok})
 
     @app.route("/api/timelapse")
     def list_timelapse():
