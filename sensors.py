@@ -1,5 +1,5 @@
 """
-Sensor management: AHT21 (temp/humidity), ENS160 (CO2/TVOC/AQI), ADS1115 (soil moisture).
+Sensor management: AHT20-compatible air sensor (temp/humidity) and ADS1115 (soil moisture).
 Runs a background thread; each sensor is optional, failures are logged and skipped.
 """
 import logging
@@ -9,7 +9,7 @@ import time
 logger = logging.getLogger(__name__)
 
 
-class AHT21:
+class AHT20:
     CMD_INIT = [0xBE, 0x08, 0x00]
     CMD_MEASURE = [0xAC, 0x33, 0x00]
     CMD_SOFT_RESET = 0xBA
@@ -28,7 +28,7 @@ class AHT21:
         time.sleep(0.04)
 
     def _write(self, payload: list[int]) -> None:
-        """Raw I2C write — AHT21 has no register addressing."""
+        """Raw I2C write — AHT20 has no register addressing."""
         from smbus2 import i2c_msg
         msg = i2c_msg.write(self.addr, payload)
         self.bus.i2c_rdwr(msg)
@@ -63,65 +63,18 @@ class AHT21:
                 break
             time.sleep(0.01)
         else:
-            raise RuntimeError("AHT21 stayed busy")
+            raise RuntimeError("AHT20 stayed busy")
 
         data = self._read_raw(7)
         if self._crc8(data[:6]) != data[6]:
-            logger.debug("AHT21 CRC mismatch: %s", data)
+            logger.debug("AHT20 CRC mismatch: %s", data)
 
         raw_hum = (data[1] << 12) | (data[2] << 4) | (data[3] >> 4)
         raw_tmp = ((data[3] & 0x0F) << 16) | (data[4] << 8) | data[5]
         return (raw_tmp / 0x100000) * 200.0 - 50.0, (raw_hum / 0x100000) * 100.0
 
 
-class ENS160:
-    REG_OPMODE = 0x10
-    REG_TEMP_IN = 0x13
-    REG_RH_IN = 0x15
-    REG_STATUS = 0x20
-    REG_AQI = 0x21
-    REG_TVOC = 0x22
-    REG_ECO2 = 0x24
-    VALIDITY = {0: "Normal", 1: "Warm-up", 2: "Initial Start-up", 3: "Invalid"}
-
-    def __init__(self, bus, addr: int = 0x53):
-        self.bus = bus
-        self.addr = addr
-        bus.write_byte_data(addr, self.REG_OPMODE, 0xF0)
-        time.sleep(0.01)
-        bus.write_byte_data(addr, self.REG_OPMODE, 0x01)
-        time.sleep(0.01)
-        bus.write_byte_data(addr, self.REG_OPMODE, 0x02)
-        time.sleep(0.05)
-
-    def set_compensation(self, temp: float, hum: float) -> None:
-        t_raw = int((temp + 273.15) * 64)
-        h_raw = int(hum * 512)
-        self.bus.write_i2c_block_data(
-            self.addr,
-            self.REG_TEMP_IN,
-            [t_raw & 0xFF, (t_raw >> 8) & 0xFF],
-        )
-        self.bus.write_i2c_block_data(
-            self.addr,
-            self.REG_RH_IN,
-            [h_raw & 0xFF, (h_raw >> 8) & 0xFF],
-        )
-
-    def read(self) -> dict:
-        status = self.bus.read_byte_data(self.addr, self.REG_STATUS)
-        validity = (status >> 2) & 0x03
-        aqi = self.bus.read_byte_data(self.addr, self.REG_AQI) & 0x07
-        lo, hi = (self.bus.read_byte_data(self.addr, self.REG_TVOC + i) for i in range(2))
-        tvoc = lo | (hi << 8)
-        lo, hi = (self.bus.read_byte_data(self.addr, self.REG_ECO2 + i) for i in range(2))
-        eco2 = lo | (hi << 8)
-        return {
-            "aqi": aqi,
-            "tvoc_ppb": tvoc,
-            "eco2_ppm": eco2,
-            "validity": self.VALIDITY.get(validity, "Unknown"),
-        }
+AHT21 = AHT20
 
 
 class ADS1115:
@@ -161,8 +114,7 @@ class SensorHub:
         self._running = False
         self._thread = None
         self._bus = None
-        self._aht: AHT21 | None = None
-        self._ens: ENS160 | None = None
+        self._aht: AHT20 | None = None
         self._ads: ADS1115 | None = None
         self._setup()
 
@@ -181,8 +133,7 @@ class SensorHub:
             return
 
         for name, cls, attr in [
-            ("AHT21", AHT21, "_aht"),
-            ("ENS160", ENS160, "_ens"),
+            ("AHT20", AHT20, "_aht"),
             ("ADS1115", ADS1115, "_ads"),
         ]:
             try:
@@ -193,7 +144,7 @@ class SensorHub:
 
     @property
     def available(self) -> bool:
-        return any([self._aht, self._ens, self._ads])
+        return any([self._aht, self._ads])
 
     def start(self) -> None:
         if not self.available:
@@ -222,22 +173,7 @@ class SensorHub:
                 data["temperature"] = round(temp, 1)
                 data["air_humidity"] = round(hum, 1)
             except Exception as exc:
-                logger.warning("AHT21 read failed: %s", exc)
-
-        if self._ens:
-            try:
-                if temp is not None:
-                    try:
-                        self._ens.set_compensation(temp, hum)
-                    except Exception:
-                        pass
-                air = self._ens.read()
-                data["aqi"] = air["aqi"]
-                data["tvoc_ppb"] = air["tvoc_ppb"]
-                data["eco2_ppm"] = air["eco2_ppm"]
-                data["ens_status"] = air["validity"]
-            except Exception as exc:
-                logger.warning("ENS160 read failed: %s", exc)
+                logger.warning("AHT20 read failed: %s", exc)
 
         if self._ads:
             try:

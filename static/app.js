@@ -140,12 +140,6 @@ function renderSensorMetrics(d) {
 
   if (d.temperature  != null) grid.appendChild(tile('🌡', 'Температура',     `${d.temperature} °C`));
   if (d.air_humidity != null) grid.appendChild(tile('💧', 'Влажность возд.',  `${d.air_humidity} %`));
-  if (d.eco2_ppm     != null) grid.appendChild(tile('💨', 'CO₂',             `${d.eco2_ppm} ppm`));
-  if (d.tvoc_ppb     != null) grid.appendChild(tile('🏭', 'TVOC',            `${d.tvoc_ppb} ppb`));
-  if (d.aqi          != null) {
-    const labels = ['', 'Отлично', 'Хорошо', 'Умеренно', 'Плохо', 'Опасно'];
-    grid.appendChild(tile('🌿', 'AQI', `${d.aqi} — ${labels[d.aqi] ?? '?'}`));
-  }
   if (Array.isArray(d.soil)) {
     d.soil.forEach(s => {
       const pct = s.moisture_pct;
@@ -212,21 +206,6 @@ function initCharts() {
     }},
   });
 
-  // Air quality: CO₂ + TVOC
-  charts.aq = new Chart(document.getElementById('chart-aq'), {
-    type: 'line',
-    data: { datasets: [
-      { label: 'CO₂ ppm',  data: [], borderColor: '#4ade80', backgroundColor: 'transparent',
-        yAxisID: 'y',  tension: 0.3, pointRadius: 0, borderWidth: 2 },
-      { label: 'TVOC ppb', data: [], borderColor: '#c084fc', backgroundColor: 'transparent',
-        yAxisID: 'y2', tension: 0.3, pointRadius: 0, borderWidth: 2 },
-    ]},
-    options: { ...CHART_DEFAULTS, scales: { x: CHART_DEFAULTS.scales.x,
-      y:  yScale('#4ade80', 'left'),
-      y2: yScale('#c084fc', 'right'),
-    }},
-  });
-
   // Soil moisture
   charts.soil = new Chart(document.getElementById('chart-soil'), {
     type: 'line',
@@ -276,10 +255,6 @@ async function loadCharts() {
     charts.air.data.datasets[0].data = pts('temperature');
     charts.air.data.datasets[1].data = pts('air_humidity');
     charts.air.update('none');
-
-    charts.aq.data.datasets[0].data = pts('eco2_ppm');
-    charts.aq.data.datasets[1].data = pts('tvoc_ppb');
-    charts.aq.update('none');
 
     charts.soil.data.datasets[0].data = pts('soil0_pct');
     charts.soil.data.datasets[1].data = pts('soil1_pct');
@@ -524,7 +499,6 @@ async function loadSettings() {
     document.getElementById('s-cv-min-hum').value      = cv.min_humidity ?? 40;
     document.getElementById('s-cv-max-temp').value     = cv.max_temperature ?? 35;
     document.getElementById('s-cv-min-temp').value     = cv.min_temperature ?? 18;
-    document.getElementById('s-cv-max-co2').value      = cv.max_co2_ppm ?? 1500;
     document.getElementById('s-cv-min-switch').value   = cv.min_switch_interval_seconds ?? 180;
     renderClimateVentRelayOptions(s.relays ?? [], cv.relay_id ?? 2);
   } catch {
@@ -623,7 +597,6 @@ async function saveSettings() {
       min_humidity:                +document.getElementById('s-cv-min-hum').value,
       max_temperature:             +document.getElementById('s-cv-max-temp').value,
       min_temperature:             +document.getElementById('s-cv-min-temp').value,
-      max_co2_ppm:                 +document.getElementById('s-cv-max-co2').value,
       min_switch_interval_seconds: +document.getElementById('s-cv-min-switch').value,
     },
   };

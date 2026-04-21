@@ -140,7 +140,6 @@ class AppApiTests(unittest.TestCase):
                 "min_humidity": 40.0,
                 "max_temperature": 35.0,
                 "min_temperature": 18.0,
-                "max_co2_ppm": 1500,
                 "min_switch_interval_seconds": 180,
             },
             "sensors": {"enabled": True},

@@ -53,6 +53,20 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual([relay["id"] for relay in loaded["relays"]], [1, 2, 3])
         self.assertEqual(loaded["humidity_control"]["relay_id"], 3)
 
+    def test_load_config_merges_missing_climate_ventilation_defaults(self):
+        config.save_config({
+            "climate_ventilation": {
+                "enabled": False,
+                "relay_id": 5,
+            }
+        })
+
+        loaded = config.load_config()
+
+        self.assertFalse(loaded["climate_ventilation"]["enabled"])
+        self.assertEqual(loaded["climate_ventilation"]["relay_id"], 5)
+        self.assertEqual(loaded["climate_ventilation"]["max_temperature"], 35.0)
+
 
 if __name__ == "__main__":
     unittest.main()

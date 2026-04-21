@@ -33,7 +33,6 @@ DEFAULT_CONFIG = {
         "min_humidity": 40.0,
         "max_temperature": 35.0,
         "min_temperature": 18.0,
-        "max_co2_ppm": 1500,
         "min_switch_interval_seconds": 180,
     },
     "sensors": {
@@ -93,6 +92,10 @@ def _merge_config(data: dict) -> dict:
     humidity_control = deepcopy(DEFAULT_CONFIG["humidity_control"])
     humidity_control.update(data.get("humidity_control", {}))
     merged["humidity_control"] = humidity_control
+
+    climate_ventilation = deepcopy(DEFAULT_CONFIG["climate_ventilation"])
+    climate_ventilation.update(data.get("climate_ventilation", {}))
+    merged["climate_ventilation"] = climate_ventilation
 
     merged["relays"] = _merge_relay_lists(data)
     merged["schedules"] = _merge_schedule_lists(data)

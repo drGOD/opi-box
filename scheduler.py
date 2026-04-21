@@ -12,7 +12,7 @@ class GrowboxScheduler:
     Background thread that:
       - Enforces relay schedules in auto mode
       - Controls a humidifier relay from air humidity with hysteresis
-      - Controls ventilation relay based on climate (humidity/temp/CO2)
+      - Controls ventilation relay based on climate (humidity/temp)
       - Periodically re-syncs relay GPIO states
       - Triggers timelapse snapshots at the configured interval
     """
@@ -133,7 +133,7 @@ class GrowboxScheduler:
         )
 
     def _check_climate_ventilation(self, now: datetime) -> None:
-        """Turn ventilation ON/OFF based on climate sensor readings."""
+        """Turn ventilation ON/OFF based on humidity and temperature readings."""
         if not self.mode.get("auto", True):
             return
 
@@ -148,46 +148,33 @@ class GrowboxScheduler:
         latest = getattr(self.sensor_hub, "latest", None) or {}
         humidity = latest.get("air_humidity")
         temperature = latest.get("temperature")
-        co2 = latest.get("eco2_ppm")
-
-        # No sensor data at all — do nothing
-        if humidity is None and temperature is None and co2 is None:
+        if humidity is None and temperature is None:
             return
 
         max_humidity = float(control.get("max_humidity", 80.0))
         min_humidity = float(control.get("min_humidity", 40.0))
         max_temperature = float(control.get("max_temperature", 35.0))
         min_temperature = float(control.get("min_temperature", 18.0))
-        max_co2 = int(control.get("max_co2_ppm", 1500))
         min_interval = max(0, int(control.get("min_switch_interval_seconds", 180)))
 
-        # Emergency ON: any parameter above max threshold
         needs_on = False
         if humidity is not None and humidity > max_humidity:
             needs_on = True
         if temperature is not None and temperature > max_temperature:
             needs_on = True
-        if co2 is not None and co2 > max_co2:
-            needs_on = True
 
-        # Force OFF: all available readings below min thresholds (too cold/dry)
         all_below = True
-        if humidity is not None:
-            if humidity >= min_humidity:
-                all_below = False
-        if temperature is not None:
-            if temperature >= min_temperature:
-                all_below = False
-        if co2 is not None:
-            if co2 >= max_co2:
-                all_below = False
+        if humidity is not None and humidity >= min_humidity:
+            all_below = False
+        if temperature is not None and temperature >= min_temperature:
+            all_below = False
 
         if needs_on:
             desired_state = True
         elif all_below:
             desired_state = False
         else:
-            return  # inside normal range, keep current state
+            return
 
         if desired_state == relay.state:
             return
@@ -199,12 +186,11 @@ class GrowboxScheduler:
         relay.set(desired_state, notify=self.relay_notify)
         self._last_climate_switch_ts = now_ts
         logger.info(
-            "Climate ventilation: %s -> %s (hum=%s, temp=%s, co2=%s)",
+            "Climate ventilation: %s -> %s (hum=%s, temp=%s)",
             relay.name,
             "ON" if desired_state else "OFF",
             f"{humidity:.1f}%" if humidity is not None else "N/A",
             f"{temperature:.1f}C" if temperature is not None else "N/A",
-            f"{co2}ppm" if co2 is not None else "N/A",
         )
 
     def _resync_relay_states(self, now: datetime) -> None:
@@ -212,7 +198,6 @@ class GrowboxScheduler:
         if not self.mode.get("auto", True):
             return
         minute_of_day = now.hour * 60 + now.minute
-        # Trigger every 15 minutes (0, 15, 30, 45)
         resync_slot = minute_of_day // 15
         if resync_slot == self._last_resync_minute:
             return

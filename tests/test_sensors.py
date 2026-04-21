@@ -12,17 +12,6 @@ class FakeAHT:
         return 23.44, 55.55
 
 
-class FakeENS:
-    def __init__(self):
-        self.compensation = []
-
-    def set_compensation(self, temp, hum):
-        self.compensation.append((temp, hum))
-
-    def read(self):
-        return {"aqi": 2, "tvoc_ppb": 15, "eco2_ppm": 700, "validity": "Normal"}
-
-
 class FakeADS:
     def __init__(self):
         self.values = {0: 20000, 1: 15000}
@@ -48,25 +37,22 @@ class SensorHubTests(unittest.TestCase):
     def tearDown(self):
         SensorHub._setup = self._old_setup
 
-    def test_read_once_collects_all_sensor_values_and_calls_callback(self):
+    def test_read_once_collects_air_and_soil_values_and_calls_callback(self):
         readings = []
         hub = SensorHub(
             {"sensors": {"soil_dry": [26000, 26000], "soil_wet": [13000, 13000]}},
             on_reading=readings.append,
         )
         hub._aht = FakeAHT()
-        hub._ens = FakeENS()
         hub._ads = FakeADS()
 
         hub._read_once()
 
         self.assertEqual(hub.latest["temperature"], 23.4)
         self.assertEqual(hub.latest["air_humidity"], 55.5)
-        self.assertEqual(hub.latest["eco2_ppm"], 700)
         self.assertEqual(hub.latest["soil"][0]["moisture_pct"], 46.2)
         self.assertEqual(hub.latest["soil"][1]["moisture_pct"], 84.6)
-        self.assertEqual(readings[0]["aqi"], 2)
-        self.assertEqual(hub._ens.compensation[0], (23.44, 55.55))
+        self.assertEqual(readings[0]["temperature"], 23.4)
 
     def test_read_once_handles_sensor_failure_without_callback(self):
         hub = SensorHub({"sensors": {}}, on_reading=lambda data: self.fail("callback should not run"))
@@ -92,15 +78,13 @@ class SensorHubTests(unittest.TestCase):
                 raise RuntimeError("broken")
 
         hub._aht = BrokenAHT()
-        hub._ens = FakeENS()
         hub._ads = FakeADS()
 
         hub._read_once()
 
         self.assertNotIn("air_humidity", hub.latest)
-        self.assertEqual(hub.latest["eco2_ppm"], 700)
         self.assertEqual(hub.latest["soil"][0]["moisture_pct"], 46.2)
-        self.assertEqual(readings[0]["aqi"], 2)
+        self.assertEqual(readings[0]["soil"][0]["moisture_pct"], 46.2)
 
     def test_available_and_close_reflect_current_hardware(self):
         hub = SensorHub({"sensors": {}}, on_reading=None)

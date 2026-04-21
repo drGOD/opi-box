@@ -196,7 +196,6 @@ class SchedulerTests(unittest.TestCase):
                     "min_humidity": 40,
                     "max_temperature": 35,
                     "min_temperature": 18,
-                    "max_co2_ppm": 1500,
                     "min_switch_interval_seconds": 0,
                 },
             },
@@ -225,7 +224,6 @@ class SchedulerTests(unittest.TestCase):
                     "min_humidity": 40,
                     "max_temperature": 35,
                     "min_temperature": 18,
-                    "max_co2_ppm": 1500,
                     "min_switch_interval_seconds": 0,
                 },
             },
@@ -241,35 +239,6 @@ class SchedulerTests(unittest.TestCase):
         scheduler._check_climate_ventilation(Now())
         self.assertEqual(relay.calls, [False])
 
-    def test_climate_ventilation_turns_on_high_co2(self):
-        relay = FakeRelay(state=False)
-        scheduler = GrowboxScheduler(
-            relays={2: relay},
-            camera=FakeCamera(),
-            config={
-                "climate_ventilation": {
-                    "enabled": True,
-                    "relay_id": 2,
-                    "max_humidity": 80,
-                    "min_humidity": 40,
-                    "max_temperature": 35,
-                    "min_temperature": 18,
-                    "max_co2_ppm": 1500,
-                    "min_switch_interval_seconds": 0,
-                },
-            },
-            mode={"auto": True},
-            sensor_hub=FakeSensorHub({"air_humidity": 50, "temperature": 25, "eco2_ppm": 2000}),
-        )
-        scheduler.relay_notify = lambda r: None
-
-        class Now:
-            def timestamp(self):
-                return 1000
-
-        scheduler._check_climate_ventilation(Now())
-        self.assertEqual(relay.calls, [True])
-
     def test_climate_ventilation_keeps_state_in_normal_range(self):
         relay = FakeRelay(state=False)
         scheduler = GrowboxScheduler(
@@ -283,7 +252,6 @@ class SchedulerTests(unittest.TestCase):
                     "min_humidity": 40,
                     "max_temperature": 35,
                     "min_temperature": 18,
-                    "max_co2_ppm": 1500,
                     "min_switch_interval_seconds": 0,
                 },
             },
@@ -312,7 +280,6 @@ class SchedulerTests(unittest.TestCase):
                     "min_humidity": 40,
                     "max_temperature": 35,
                     "min_temperature": 18,
-                    "max_co2_ppm": 1500,
                     "min_switch_interval_seconds": 180,
                 },
             },
