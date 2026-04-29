@@ -1,6 +1,7 @@
 import io
 import logging
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,6 +22,28 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+_TIMELAPSE_TS_RE = re.compile(r"(\d{8}_\d{6})")
+_GIF_FPS = 24
+_GIF_FRAME_DURATION_MS = round(1000 / _GIF_FPS)
+
+
+def _timelapse_timestamp(path: Path) -> datetime | None:
+    match = _TIMELAPSE_TS_RE.search(path.name)
+    if not match:
+        return None
+    return datetime.strptime(match.group(1), "%Y%m%d_%H%M%S")
+
+
+def _parse_gif_range(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y%m%d_%H%M%S"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    raise ValueError(value)
 
 
 @dataclass
@@ -370,33 +393,49 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
 
     @app.route("/api/timelapse")
     def list_timelapse():
-        files = sorted(runtime.timelapse_dir.glob("*.jpg"), reverse=True)[:100]
+        files = sorted(runtime.timelapse_dir.glob("*.jpg"), reverse=True)
         return jsonify([item.name for item in files])
 
     @app.route("/api/timelapse/gif")
     def get_timelapse_gif():
         try:
-            from PIL import Image, ImageOps, UnidentifiedImageError
+            from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
         except ImportError:
             logger.exception("Pillow is required to generate timelapse GIFs")
             return jsonify({"error": "GIF support is not installed"}), 500
 
         try:
-            duration = int(request.args.get("duration", 500))
-            limit = int(request.args.get("limit", 100))
+            start = _parse_gif_range(request.args.get("start"))
+            end = _parse_gif_range(request.args.get("end"))
         except ValueError:
-            return jsonify({"error": "Invalid duration or limit"}), 400
+            return jsonify({"error": "Invalid date range"}), 400
 
-        duration = max(100, min(duration, 5000))
-        limit = max(1, min(limit, 300))
+        if start and end and start > end:
+            return jsonify({"error": "Start date must be before end date"}), 400
 
-        files = sorted(runtime.timelapse_dir.glob("*.jpg"))[-limit:]
+        dated_files = []
+        for filepath in sorted(runtime.timelapse_dir.glob("*.jpg")):
+            ts = _timelapse_timestamp(filepath)
+            if ts is None:
+                continue
+            if start and ts < start:
+                continue
+            if end and ts > end:
+                continue
+            dated_files.append((filepath, ts))
+
+        files = dated_files
         if not files:
             return jsonify({"error": "No timelapse frames"}), 404
 
+        try:
+            font = ImageFont.truetype("DejaVuSans.ttf", 22)
+        except OSError:
+            font = ImageFont.load_default()
+
         frames = []
         frame_size = None
-        for filepath in files:
+        for filepath, ts in files:
             try:
                 with Image.open(filepath) as image:
                     frame = image.convert("RGB")
@@ -410,6 +449,29 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
                         (frame_size[1] - contained.height) // 2,
                     )
                     canvas.paste(contained, offset)
+                    label = ts.strftime("%d.%m.%Y %H:%M:%S")
+                    overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+                    draw = ImageDraw.Draw(overlay)
+                    bbox = draw.textbbox((0, 0), label, font=font)
+                    label_w = bbox[2] - bbox[0]
+                    label_h = bbox[3] - bbox[1]
+                    margin = 14
+                    padding_x = 10
+                    padding_y = 6
+                    box = (
+                        margin,
+                        margin,
+                        margin + label_w + padding_x * 2,
+                        margin + label_h + padding_y * 2,
+                    )
+                    draw.rounded_rectangle(box, radius=6, fill=(0, 0, 0, 150))
+                    draw.text(
+                        (margin + padding_x, margin + padding_y),
+                        label,
+                        font=font,
+                        fill=(255, 255, 255, 240),
+                    )
+                    canvas = Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
                     frames.append(canvas)
             except (OSError, UnidentifiedImageError):
                 logger.warning("Skipping unreadable timelapse frame %s", filepath)
@@ -423,7 +485,7 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
             format="GIF",
             save_all=True,
             append_images=frames[1:],
-            duration=duration,
+            duration=_GIF_FRAME_DURATION_MS,
             loop=0,
             optimize=True,
         )

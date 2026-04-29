@@ -112,6 +112,17 @@
           <button class="btn btn-sm btn-outline" onclick="loadTimelapse()">Обновить</button>
         </div>
       </div>
+      <div id="timelapse-range" class="timelapse-range" style="display:none">
+        <div class="form-group">
+          <label>Начало GIF</label>
+          <input type="datetime-local" id="timelapse-start" step="1">
+        </div>
+        <div class="form-group">
+          <label>Конец GIF</label>
+          <input type="datetime-local" id="timelapse-end" step="1">
+        </div>
+        <div id="timelapse-range-count" class="range-count"></div>
+      </div>
       <div id="timelapse-gallery" class="gallery"></div>
       <div id="timelapse-empty" class="empty-state" style="display:none">
         Снимки пока не сохранены. Они появятся после первого срабатывания таймлапса.

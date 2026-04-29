@@ -9,6 +9,7 @@ let relaySettingsData = [];
 let chartHours     = 24;
 let charts         = {};
 let chartsInited   = false;
+let timelapseFiles = [];
 
 // =========================================================================
 // Tab navigation
@@ -375,6 +376,69 @@ function stopStream() {
 // =========================================================================
 // Timelapse gallery
 // =========================================================================
+function parseTimelapseDate(name) {
+  const m = name.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
+  if (!m) return null;
+  return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+}
+
+function formatDateTimeInput(date) {
+  const pad = value => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+         `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function formatTimelapseLabel(name) {
+  const date = parseTimelapseDate(name);
+  return date ? date.toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }) : name;
+}
+
+function updateTimelapseRange(files) {
+  const range = document.getElementById('timelapse-range');
+  const startInput = document.getElementById('timelapse-start');
+  const endInput = document.getElementById('timelapse-end');
+  const count = document.getElementById('timelapse-range-count');
+  const dates = files.map(parseTimelapseDate).filter(Boolean).sort((a, b) => a - b);
+
+  if (!dates.length) {
+    range.style.display = 'none';
+    return;
+  }
+
+  const min = dates[0];
+  const max = dates[dates.length - 1];
+  const minValue = formatDateTimeInput(min);
+  const maxValue = formatDateTimeInput(max);
+  range.style.display = '';
+  startInput.min = minValue;
+  startInput.max = maxValue;
+  endInput.min = minValue;
+  endInput.max = maxValue;
+  if (!startInput.value || startInput.value < minValue || startInput.value > maxValue) startInput.value = minValue;
+  if (!endInput.value || endInput.value < minValue || endInput.value > maxValue) endInput.value = maxValue;
+
+  updateTimelapseRangeCount();
+}
+
+function updateTimelapseRangeCount() {
+  const count = document.getElementById('timelapse-range-count');
+  const startValue = document.getElementById('timelapse-start').value;
+  const endValue = document.getElementById('timelapse-end').value;
+  const start = startValue ? new Date(startValue) : null;
+  const end = endValue ? new Date(endValue) : null;
+  const selected = timelapseFiles.filter(name => {
+    const date = parseTimelapseDate(name);
+    return date && (!start || date >= start) && (!end || date <= end);
+  }).length;
+  count.textContent = selected ? `Кадров в GIF: ${selected}` : 'В выбранном диапазоне нет снимков';
+}
+
 async function loadTimelapse() {
   const gallery = document.getElementById('timelapse-gallery');
   const empty   = document.getElementById('timelapse-empty');
@@ -382,14 +446,15 @@ async function loadTimelapse() {
   gallery.innerHTML = '';
   try {
     const files = await apiFetch('/api/timelapse');
+    timelapseFiles = files;
+    updateTimelapseRange(files);
     if (gifBtn) gifBtn.disabled = !files.length;
     if (!files.length) { empty.style.display = 'block'; return; }
     empty.style.display = 'none';
     files.forEach(name => {
       const item = document.createElement('div');
       item.className = 'gallery-item';
-      const m  = name.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
-      const ts = m ? `${m[3]}.${m[2]}.${m[1]} ${m[4]}:${m[5]}` : name;
+      const ts = formatTimelapseLabel(name);
       item.innerHTML = `<img src="/api/timelapse/${name}" loading="lazy" alt="${ts}">
                         <div class="gallery-ts">${ts}</div>`;
       item.addEventListener('click', () => openLightbox(`/api/timelapse/${name}`));
@@ -403,12 +468,17 @@ async function loadTimelapse() {
 async function downloadTimelapseGif() {
   const btn = document.getElementById('timelapse-gif-btn');
   const originalText = btn ? btn.textContent : '';
+  const params = new URLSearchParams();
+  const start = document.getElementById('timelapse-start').value;
+  const end = document.getElementById('timelapse-end').value;
+  if (start) params.set('start', start);
+  if (end) params.set('end', end);
   if (btn) {
     btn.disabled = true;
     btn.textContent = 'Готовлю...';
   }
   try {
-    const response = await fetch('/api/timelapse/gif');
+    const response = await fetch(`/api/timelapse/gif?${params.toString()}`);
     if (!response.ok) {
       let message = 'Ошибка создания GIF';
       try {
@@ -437,6 +507,10 @@ async function downloadTimelapseGif() {
     }
   }
 }
+['timelapse-start', 'timelapse-end'].forEach(id => {
+  const input = document.getElementById(id);
+  if (input) input.addEventListener('change', updateTimelapseRangeCount);
+});
 function openLightbox(src) {
   document.getElementById('lightbox-img').src = src;
   document.getElementById('lightbox').classList.add('open');

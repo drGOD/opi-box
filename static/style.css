@@ -237,6 +237,23 @@ main { padding: 20px 16px; max-width: 1100px; margin: 0 auto; }
   font-size: .9rem;
 }
 
+.timelapse-range {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.timelapse-range .form-group { margin-bottom: 0; }
+.range-count {
+  color: var(--text2);
+  font-size: .82rem;
+  padding-bottom: 9px;
+  white-space: nowrap;
+}
+
 /* ── Lightbox ────────────────────────────────────────────────────────── */
 
 .lightbox {
@@ -279,7 +296,8 @@ main { padding: 20px 16px; max-width: 1100px; margin: 0 auto; }
 
 input[type="text"],
 input[type="number"],
-input[type="time"] {
+input[type="time"],
+input[type="datetime-local"] {
   width: 100%;
   background: var(--surface2);
   border: 1px solid var(--border);
@@ -482,4 +500,6 @@ input:focus { border-color: var(--accent); }
   .sched-row { grid-template-columns: 1fr 1fr; row-gap: 8px; }
   .sched-label { grid-column: 1 / -1; }
   .sched-enabled { grid-column: 1 / -1; }
+  .timelapse-range { grid-template-columns: 1fr; }
+  .range-count { padding-bottom: 0; }
 }

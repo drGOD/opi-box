@@ -1,4 +1,5 @@
 import importlib
+import io
 import os
 import tempfile
 import unittest
@@ -291,6 +292,29 @@ class AppApiTests(unittest.TestCase):
         self.assertEqual(response.mimetype, "image/gif")
         self.assertIn("attachment", response.headers["Content-Disposition"])
         self.assertTrue(response.data.startswith(b"GIF"))
+
+    def test_timelapse_gif_endpoint_filters_by_date_range(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow unavailable")
+
+        samples = [
+            ("frame_20260405_115959.jpg", "red"),
+            ("frame_20260405_120000.jpg", "green"),
+            ("frame_20260405_120001.jpg", "blue"),
+        ]
+        for filename, color in samples:
+            Image.new("RGB", (32, 24), color=color).save(self.runtime.timelapse_dir / filename)
+
+        response = self.client.get(
+            "/api/timelapse/gif?start=2026-04-05T12:00:00&end=2026-04-05T12:00:01"
+        )
+        response.close()
+
+        self.assertEqual(response.status_code, 200)
+        gif = Image.open(io.BytesIO(response.data))
+        self.assertEqual(gif.n_frames, 2)
 
     def test_timelapse_gif_endpoint_handles_empty_archive(self):
         response = self.client.get("/api/timelapse/gif")
