@@ -25,8 +25,21 @@ fi
 
 echo "$LOG_PREFIX Update available: ${LOCAL:0:7} → ${REMOTE:0:7}"
 
+SCRIPT_PATHS="update.sh gif.sh timelapse_gif.py"
+if [ -n "$(git status --porcelain -- $SCRIPT_PATHS)" ]; then
+    BACKUP_DIR=$(mktemp -d /tmp/growbox-update-scripts.XXXXXX)
+    for path in $SCRIPT_PATHS; do
+        if [ -e "$path" ]; then
+            cp -a "$path" "$BACKUP_DIR/"
+        fi
+    done
+    echo "$LOG_PREFIX Local script changes backed up to $BACKUP_DIR"
+    git restore --staged --worktree -- $SCRIPT_PATHS 2>/dev/null || true
+    git clean -f -- $SCRIPT_PATHS >/dev/null 2>&1 || true
+fi
+
 # Pull — config.json is in .gitignore so it won't be touched
-git pull origin main --quiet
+git pull --ff-only origin main --quiet
 
 # Re-install deps only if requirements changed
 if git diff --name-only "$LOCAL" "$REMOTE" | grep -q 'requirements.txt'; then
