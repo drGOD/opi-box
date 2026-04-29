@@ -26,9 +26,24 @@ fi
 
 # --- System packages (only small, essential ones — OpenCV comes via pip) ---
 apt-get update -qq
+
+GPIOD_LIB_PACKAGE=""
+for candidate in libgpiod3 libgpiod2; do
+    if apt-cache show "$candidate" >/dev/null 2>&1; then
+        GPIOD_LIB_PACKAGE="$candidate"
+        break
+    fi
+done
+
+if [ -z "$GPIOD_LIB_PACKAGE" ]; then
+    echo "ERROR: neither libgpiod3 nor libgpiod2 is available from apt."
+    echo "Check your Debian/Armbian package sources and run: apt-get update"
+    exit 1
+fi
+
 apt-get install -y --no-install-recommends \
     git python3 python3-venv python3-pip \
-    libgpiod2 gpiod python3-libgpiod \
+    "$GPIOD_LIB_PACKAGE" gpiod python3-libgpiod \
     v4l-utils ffmpeg
 
 # --- Clone or update source ---
