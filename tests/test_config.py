@@ -26,7 +26,6 @@ class ConfigTests(unittest.TestCase):
     def test_save_and_load_config_roundtrip_top_level_overrides(self):
         payload = {
             **config.DEFAULT_CONFIG,
-            "telegram_token": "token",
             "camera_device": 3,
             "sensors": {"enabled": False},
         }
@@ -34,7 +33,6 @@ class ConfigTests(unittest.TestCase):
         config.save_config(payload)
         loaded = config.load_config()
 
-        self.assertEqual(loaded["telegram_token"], "token")
         self.assertEqual(loaded["camera_device"], 3)
         self.assertEqual(loaded["sensors"]["enabled"], False)
         self.assertIn("read_interval_seconds", loaded["sensors"])

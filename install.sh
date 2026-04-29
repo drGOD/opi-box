@@ -53,9 +53,6 @@ if [ ! -f "$APP_DIR/config.json" ]; then
     echo ">> No config.json found — creating default (edit it later)"
     cat > "$APP_DIR/config.json" << 'EOF'
 {
-  "telegram_token": "",
-  "telegram_chat_id": "",
-  "telegram_timelapse": true,
   "timelapse_interval_minutes": 30,
   "timelapse_enabled": true,
   "camera_device": 0,
@@ -103,4 +100,4 @@ echo "  List chips : gpiodetect"
 echo "  List lines : gpioinfo gpiochip0"
 echo "  Test pin 7 : gpioset gpiochip0 7=1"
 echo ""
-echo "Next: edit /opt/growbox/config.json with your GPIO pins and Telegram token"
+echo "Next: edit /opt/growbox/config.json with your GPIO pins and sensor settings"

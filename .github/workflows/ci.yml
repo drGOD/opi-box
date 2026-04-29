@@ -51,7 +51,6 @@ jobs:
               sys.modules[mod] = types.ModuleType(mod)
 
           import config
-          import telegram_bot
           import relay
           print('All imports OK')
           "
