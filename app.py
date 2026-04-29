@@ -1,8 +1,9 @@
-import io
 import logging
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 _TIMELAPSE_TS_RE = re.compile(r"(\d{8}_\d{6})")
 _GIF_FPS = 24
 _GIF_FRAME_DURATION_MS = round(1000 / _GIF_FPS)
+_GIF_MAX_SIZE = (960, 720)
 
 
 def _timelapse_timestamp(path: Path) -> datetime | None:
@@ -44,6 +46,86 @@ def _parse_gif_range(value: str | None) -> datetime | None:
         except ValueError:
             continue
     raise ValueError(value)
+
+
+def _link_frame_sequence(files: list[tuple[Path, datetime]], temp_dir: Path) -> None:
+    for index, (filepath, _ts) in enumerate(files):
+        link_path = temp_dir / f"frame_{index:06d}.jpg"
+        try:
+            os.symlink(filepath, link_path)
+        except OSError:
+            try:
+                os.link(filepath, link_path)
+            except OSError:
+                shutil.copyfile(filepath, link_path)
+
+
+def _write_label_sequence(files: list[tuple[Path, datetime]], temp_dir: Path) -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    try:
+        font = ImageFont.truetype("DejaVuSans.ttf", 22)
+    except OSError:
+        font = ImageFont.load_default()
+
+    margin = 0
+    padding_x = 10
+    padding_y = 6
+    for index, (_filepath, ts) in enumerate(files):
+        label = ts.strftime("%d.%m.%Y %H:%M:%S")
+        scratch = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(scratch)
+        bbox = draw.textbbox((0, 0), label, font=font)
+        label_w = bbox[2] - bbox[0]
+        label_h = bbox[3] - bbox[1]
+        image = Image.new(
+            "RGBA",
+            (label_w + padding_x * 2, label_h + padding_y * 2),
+            (0, 0, 0, 0),
+        )
+        draw = ImageDraw.Draw(image)
+        draw.rounded_rectangle(
+            (margin, margin, image.width - 1, image.height - 1),
+            radius=6,
+            fill=(0, 0, 0, 150),
+        )
+        draw.text((padding_x, padding_y), label, font=font, fill=(255, 255, 255, 240))
+        image.save(temp_dir / f"label_{index:06d}.png")
+
+
+def _generate_gif_with_ffmpeg(files: list[tuple[Path, datetime]], output_path: Path, temp_dir: Path) -> None:
+    _link_frame_sequence(files, temp_dir)
+    _write_label_sequence(files, temp_dir)
+    width, height = _GIF_MAX_SIZE
+    filter_complex = (
+        f"[0:v]scale={width}:{height}:force_original_aspect_ratio=decrease:flags=bilinear,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black[base];"
+        "[base][1:v]overlay=14:14:format=auto,"
+        "split[s0][s1];"
+        "[s0]palettegen=stats_mode=diff[p];"
+        "[s1][p]paletteuse=dither=bayer:bayer_scale=5"
+    )
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-framerate",
+            str(_GIF_FPS),
+            "-i",
+            str(temp_dir / "frame_%06d.jpg"),
+            "-framerate",
+            str(_GIF_FPS),
+            "-i",
+            str(temp_dir / "label_%06d.png"),
+            "-filter_complex",
+            filter_complex,
+            str(output_path),
+        ],
+        check=True,
+    )
 
 
 @dataclass
@@ -399,12 +481,6 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
     @app.route("/api/timelapse/gif")
     def get_timelapse_gif():
         try:
-            from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
-        except ImportError:
-            logger.exception("Pillow is required to generate timelapse GIFs")
-            return jsonify({"error": "GIF support is not installed"}), 500
-
-        try:
             start = _parse_gif_range(request.args.get("start"))
             end = _parse_gif_range(request.args.get("end"))
         except ValueError:
@@ -428,75 +504,118 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
         if not files:
             return jsonify({"error": "No timelapse frames"}), 404
 
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            suffix=".gif",
+            prefix="growbox_timelapse_",
+            dir=runtime.timelapse_dir,
+            delete=False,
+        ) as output:
+            output_path = Path(output.name)
+
         try:
-            font = ImageFont.truetype("DejaVuSans.ttf", 22)
-        except OSError:
-            font = ImageFont.load_default()
+            if shutil.which("ffmpeg"):
+                with tempfile.TemporaryDirectory(prefix="growbox_gif_", dir=runtime.timelapse_dir) as temp_dir:
+                    _generate_gif_with_ffmpeg(files, output_path, Path(temp_dir))
+            else:
+                try:
+                    from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
+                except ImportError:
+                    logger.exception("Pillow or ffmpeg is required to generate timelapse GIFs")
+                    output_path.unlink(missing_ok=True)
+                    return jsonify({"error": "GIF support is not installed"}), 500
 
-        frames = []
-        frame_size = None
-        for filepath, ts in files:
-            try:
-                with Image.open(filepath) as image:
-                    frame = image.convert("RGB")
-                    frame.thumbnail((960, 720), Image.Resampling.LANCZOS)
-                    if frame_size is None:
-                        frame_size = frame.size
-                    contained = ImageOps.contain(frame, frame_size, Image.Resampling.LANCZOS)
-                    canvas = Image.new("RGB", frame_size, (0, 0, 0))
-                    offset = (
-                        (frame_size[0] - contained.width) // 2,
-                        (frame_size[1] - contained.height) // 2,
-                    )
-                    canvas.paste(contained, offset)
-                    label = ts.strftime("%d.%m.%Y %H:%M:%S")
-                    overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-                    draw = ImageDraw.Draw(overlay)
-                    bbox = draw.textbbox((0, 0), label, font=font)
-                    label_w = bbox[2] - bbox[0]
-                    label_h = bbox[3] - bbox[1]
-                    margin = 14
-                    padding_x = 10
-                    padding_y = 6
-                    box = (
-                        margin,
-                        margin,
-                        margin + label_w + padding_x * 2,
-                        margin + label_h + padding_y * 2,
-                    )
-                    draw.rounded_rectangle(box, radius=6, fill=(0, 0, 0, 150))
-                    draw.text(
-                        (margin + padding_x, margin + padding_y),
-                        label,
-                        font=font,
-                        fill=(255, 255, 255, 240),
-                    )
-                    canvas = Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
-                    frames.append(canvas)
-            except (OSError, UnidentifiedImageError):
-                logger.warning("Skipping unreadable timelapse frame %s", filepath)
+                try:
+                    font = ImageFont.truetype("DejaVuSans.ttf", 22)
+                except OSError:
+                    font = ImageFont.load_default()
 
-        if not frames:
-            return jsonify({"error": "No readable timelapse frames"}), 422
+                frame_size = None
 
-        output = io.BytesIO()
-        frames[0].save(
-            output,
-            format="GIF",
-            save_all=True,
-            append_images=frames[1:],
-            duration=_GIF_FRAME_DURATION_MS,
-            loop=0,
-            optimize=True,
-        )
-        output.seek(0)
+                def render_frame(filepath: Path, ts: datetime):
+                    nonlocal frame_size
+                    try:
+                        with Image.open(filepath) as image:
+                            frame = image.convert("RGB")
+                            frame.thumbnail(_GIF_MAX_SIZE, Image.Resampling.BILINEAR)
+                            if frame_size is None:
+                                frame_size = frame.size
+                            contained = ImageOps.contain(frame, frame_size, Image.Resampling.BILINEAR)
+                            canvas = Image.new("RGB", frame_size, (0, 0, 0))
+                            offset = (
+                                (frame_size[0] - contained.width) // 2,
+                                (frame_size[1] - contained.height) // 2,
+                            )
+                            canvas.paste(contained, offset)
+                            label = ts.strftime("%d.%m.%Y %H:%M:%S")
+                            overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+                            draw = ImageDraw.Draw(overlay)
+                            bbox = draw.textbbox((0, 0), label, font=font)
+                            label_w = bbox[2] - bbox[0]
+                            label_h = bbox[3] - bbox[1]
+                            margin = 14
+                            padding_x = 10
+                            padding_y = 6
+                            box = (
+                                margin,
+                                margin,
+                                margin + label_w + padding_x * 2,
+                                margin + label_h + padding_y * 2,
+                            )
+                            draw.rounded_rectangle(box, radius=6, fill=(0, 0, 0, 150))
+                            draw.text(
+                                (margin + padding_x, margin + padding_y),
+                                label,
+                                font=font,
+                                fill=(255, 255, 255, 240),
+                            )
+                            canvas = Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
+                            return canvas
+                    except (OSError, UnidentifiedImageError):
+                        logger.warning("Skipping unreadable timelapse frame %s", filepath)
+                        return None
+
+                first_frame = None
+                first_index = 0
+                for index, (filepath, ts) in enumerate(files):
+                    first_frame = render_frame(filepath, ts)
+                    if first_frame is not None:
+                        first_index = index
+                        break
+
+                if first_frame is None:
+                    output_path.unlink(missing_ok=True)
+                    return jsonify({"error": "No readable timelapse frames"}), 422
+
+                def rendered_tail():
+                    for filepath, ts in files[first_index + 1:]:
+                        frame = render_frame(filepath, ts)
+                        if frame is not None:
+                            yield frame
+
+                first_frame.save(
+                    output_path,
+                    format="GIF",
+                    save_all=True,
+                    append_images=rendered_tail(),
+                    duration=_GIF_FRAME_DURATION_MS,
+                    loop=0,
+                    optimize=False,
+                    disposal=2,
+                )
+        except Exception:
+            output_path.unlink(missing_ok=True)
+            logger.exception("Failed to generate timelapse GIF")
+            return jsonify({"error": "Failed to generate GIF"}), 500
         filename = f"growbox_timelapse_{datetime.now().strftime('%Y%m%d_%H%M%S')}.gif"
-        return send_file(
-            output,
+        response = send_file(
+            output_path,
             mimetype="image/gif",
             as_attachment=True,
             download_name=filename,
         )
+        response.call_on_close(lambda: output_path.unlink(missing_ok=True))
+        return response
 
     @app.route("/api/timelapse/<filename>")
     def get_timelapse_image(filename: str):

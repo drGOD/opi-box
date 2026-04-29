@@ -29,7 +29,7 @@ apt-get update -qq
 apt-get install -y --no-install-recommends \
     git python3 python3-venv python3-pip \
     libgpiod2 gpiod python3-libgpiod \
-    v4l-utils
+    v4l-utils ffmpeg
 
 # --- Clone or update source ---
 if [ -d "$APP_DIR/.git" ]; then
