@@ -81,7 +81,7 @@ python3 -m venv "$APP_DIR/venv"
 cp "$APP_DIR/growbox.service" /etc/systemd/system/growbox.service
 
 # --- Systemd: OTA timer ---
-chmod +x "$APP_DIR/update.sh"
+chmod +x "$APP_DIR/update.sh" "$APP_DIR/gif.sh" "$APP_DIR/timelapse_gif.py"
 cp "$APP_DIR/ota.service" /etc/systemd/system/growbox-ota.service
 cp "$APP_DIR/ota.timer"   /etc/systemd/system/growbox-ota.timer
 
@@ -96,6 +96,7 @@ IP=$(hostname -I | awk '{print $1}')
 echo "  Web UI : http://${IP}:8080"
 echo "  Logs   : journalctl -u growbox -f"
 echo "  OTA    : journalctl -u growbox-ota -f"
+echo "  GIF    : /opt/growbox/gif.sh"
 echo ""
 echo "GPIO tips:"
 echo "  List chips : gpiodetect"

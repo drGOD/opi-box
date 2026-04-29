@@ -34,6 +34,8 @@ if git diff --name-only "$LOCAL" "$REMOTE" | grep -q 'requirements.txt'; then
     venv/bin/pip install -r requirements.txt --quiet
 fi
 
+chmod +x update.sh gif.sh timelapse_gif.py
+
 # Restart service
 systemctl restart growbox
 echo "$LOG_PREFIX Service restarted. Now at $(git rev-parse --short HEAD)"
