@@ -134,7 +134,8 @@ sudo gpiodetect
 Then inspect lines:
 
 ```bash
-sudo gpioinfo gpiochip0
+sudo gpioinfo -c gpiochip0
+sudo gpioinfo -c gpiochip1
 ```
 
 The number at the start of each line is the GPIO line offset used in `config.json`. For example, if `gpioinfo` shows:
@@ -154,8 +155,8 @@ gpiofind PH2
 Test a relay line manually:
 
 ```bash
-sudo gpioset gpiochip0 7=1
-sudo gpioset gpiochip0 7=0
+sudo gpioset -c gpiochip0 7=1
+sudo gpioset -c gpiochip0 7=0
 ```
 
 On active-low relay boards, `0` often turns the relay on and `1` turns it off. If the web UI switch is inverted, change `"active_low"` for that relay.
@@ -477,14 +478,15 @@ Check GPIO discovery:
 
 ```bash
 sudo gpiodetect
-sudo gpioinfo gpiochip0
+sudo gpioinfo -c gpiochip0
+sudo gpioinfo -c gpiochip1
 ```
 
 Test the line manually:
 
 ```bash
-sudo gpioset gpiochip0 7=0
-sudo gpioset gpiochip0 7=1
+sudo gpioset -c gpiochip0 7=0
+sudo gpioset -c gpiochip0 7=1
 ```
 
 If manual switching works but the app does not, check `gpio_chip`, `gpio_pin`, `active_low`, and service logs.
@@ -538,4 +540,3 @@ python app.py
 ```
 
 If GPIO or I2C is unavailable, the app logs warnings and continues where possible.
-
