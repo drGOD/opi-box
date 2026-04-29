@@ -373,6 +373,69 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
         files = sorted(runtime.timelapse_dir.glob("*.jpg"), reverse=True)[:100]
         return jsonify([item.name for item in files])
 
+    @app.route("/api/timelapse/gif")
+    def get_timelapse_gif():
+        try:
+            from PIL import Image, ImageOps, UnidentifiedImageError
+        except ImportError:
+            logger.exception("Pillow is required to generate timelapse GIFs")
+            return jsonify({"error": "GIF support is not installed"}), 500
+
+        try:
+            duration = int(request.args.get("duration", 500))
+            limit = int(request.args.get("limit", 100))
+        except ValueError:
+            return jsonify({"error": "Invalid duration or limit"}), 400
+
+        duration = max(100, min(duration, 5000))
+        limit = max(1, min(limit, 300))
+
+        files = sorted(runtime.timelapse_dir.glob("*.jpg"))[-limit:]
+        if not files:
+            return jsonify({"error": "No timelapse frames"}), 404
+
+        frames = []
+        frame_size = None
+        for filepath in files:
+            try:
+                with Image.open(filepath) as image:
+                    frame = image.convert("RGB")
+                    frame.thumbnail((960, 720), Image.Resampling.LANCZOS)
+                    if frame_size is None:
+                        frame_size = frame.size
+                    contained = ImageOps.contain(frame, frame_size, Image.Resampling.LANCZOS)
+                    canvas = Image.new("RGB", frame_size, (0, 0, 0))
+                    offset = (
+                        (frame_size[0] - contained.width) // 2,
+                        (frame_size[1] - contained.height) // 2,
+                    )
+                    canvas.paste(contained, offset)
+                    frames.append(canvas)
+            except (OSError, UnidentifiedImageError):
+                logger.warning("Skipping unreadable timelapse frame %s", filepath)
+
+        if not frames:
+            return jsonify({"error": "No readable timelapse frames"}), 422
+
+        output = io.BytesIO()
+        frames[0].save(
+            output,
+            format="GIF",
+            save_all=True,
+            append_images=frames[1:],
+            duration=duration,
+            loop=0,
+            optimize=True,
+        )
+        output.seek(0)
+        filename = f"growbox_timelapse_{datetime.now().strftime('%Y%m%d_%H%M%S')}.gif"
+        return send_file(
+            output,
+            mimetype="image/gif",
+            as_attachment=True,
+            download_name=filename,
+        )
+
     @app.route("/api/timelapse/<filename>")
     def get_timelapse_image(filename: str):
         filepath = runtime.timelapse_dir / Path(filename).name

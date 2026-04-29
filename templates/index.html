@@ -107,7 +107,10 @@
     <div class="card">
       <div class="card-title">
         Архив таймлапса
-        <button class="btn btn-sm btn-outline" style="float:right" onclick="loadTimelapse()">Обновить</button>
+        <div class="card-title-actions">
+          <button id="timelapse-gif-btn" class="btn btn-sm" onclick="downloadTimelapseGif()">⬇ GIF</button>
+          <button class="btn btn-sm btn-outline" onclick="loadTimelapse()">Обновить</button>
+        </div>
       </div>
       <div id="timelapse-gallery" class="gallery"></div>
       <div id="timelapse-empty" class="empty-state" style="display:none">

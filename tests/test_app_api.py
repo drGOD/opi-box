@@ -274,6 +274,29 @@ class AppApiTests(unittest.TestCase):
         self.assertEqual(delete.status_code, 200)
         self.assertFalse(image_path.exists())
 
+    def test_timelapse_gif_endpoint_returns_gif(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow unavailable")
+
+        for index, color in enumerate(("red", "green")):
+            image_path = self.runtime.timelapse_dir / f"frame_20260405_12000{index}.jpg"
+            Image.new("RGB", (32, 24), color=color).save(image_path)
+
+        response = self.client.get("/api/timelapse/gif?duration=200")
+        response.close()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "image/gif")
+        self.assertIn("attachment", response.headers["Content-Disposition"])
+        self.assertTrue(response.data.startswith(b"GIF"))
+
+    def test_timelapse_gif_endpoint_handles_empty_archive(self):
+        response = self.client.get("/api/timelapse/gif")
+
+        self.assertEqual(response.status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

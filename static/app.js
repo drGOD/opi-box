@@ -378,9 +378,11 @@ function stopStream() {
 async function loadTimelapse() {
   const gallery = document.getElementById('timelapse-gallery');
   const empty   = document.getElementById('timelapse-empty');
+  const gifBtn  = document.getElementById('timelapse-gif-btn');
   gallery.innerHTML = '';
   try {
     const files = await apiFetch('/api/timelapse');
+    if (gifBtn) gifBtn.disabled = !files.length;
     if (!files.length) { empty.style.display = 'block'; return; }
     empty.style.display = 'none';
     files.forEach(name => {
@@ -394,7 +396,45 @@ async function loadTimelapse() {
       gallery.appendChild(item);
     });
   } catch {
+    if (gifBtn) gifBtn.disabled = true;
     showToast('Ошибка загрузки таймлапса', 'err');
+  }
+}
+async function downloadTimelapseGif() {
+  const btn = document.getElementById('timelapse-gif-btn');
+  const originalText = btn ? btn.textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Готовлю...';
+  }
+  try {
+    const response = await fetch('/api/timelapse/gif');
+    if (!response.ok) {
+      let message = 'Ошибка создания GIF';
+      try {
+        const payload = await response.json();
+        if (payload.error) message = payload.error;
+      } catch { /* ignore */ }
+      throw new Error(message);
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `growbox_timelapse_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.gif`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast('GIF готов');
+  } catch (error) {
+    showToast(error.message || 'Ошибка создания GIF', 'err');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
   }
 }
 function openLightbox(src) {
