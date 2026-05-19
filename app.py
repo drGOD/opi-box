@@ -342,6 +342,13 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
         relay.set(state, notify=lambda relay_obj: persist_relay_state(relay_obj, "manual"))
         return jsonify({**relay.to_dict(), "auto_mode": runtime.mode["auto"]})
 
+    @app.route("/api/auto_mode/toggle", methods=["POST"])
+    def toggle_auto_mode():
+        runtime.mode["auto"] = not runtime.mode["auto"]
+        if runtime.mode["auto"]:
+            apply_auto_mode()
+        return jsonify({"ok": True, "auto_mode": runtime.mode["auto"]})
+
     @app.route("/api/auto_mode", methods=["POST"])
     def enable_auto_mode():
         runtime.mode["auto"] = True

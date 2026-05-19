@@ -29,10 +29,8 @@ DEFAULT_CONFIG = {
     "climate_ventilation": {
         "enabled": True,
         "relay_id": 2,
-        "max_humidity": 80.0,
-        "min_humidity": 40.0,
-        "max_temperature": 35.0,
-        "min_temperature": 18.0,
+        "target_temperature": 25.0,
+        "temperature_hysteresis": 4.0,
         "min_switch_interval_seconds": 180,
     },
     "sensors": {

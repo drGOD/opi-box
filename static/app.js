@@ -64,6 +64,12 @@ async function pollStatus() {
     const dot = document.getElementById('conn-dot');
     dot.className = 'dot dot-on';
     dot.title = 'Онлайн';
+    // Sync auto toggle
+    const autoToggle = document.getElementById('auto-toggle');
+    if (autoToggle) {
+      autoToggle.checked = statusData.auto_mode;
+      document.getElementById('auto-toggle-status').textContent = statusData.auto_mode ? 'ВКЛ' : 'ВЫКЛ';
+    }
   } catch {
     const dot = document.getElementById('conn-dot');
     dot.className = 'dot dot-off';
@@ -110,6 +116,20 @@ async function enableAutoMode() {
     await pollStatus();
   } catch {
     showToast('Ошибка', 'err');
+  }
+}
+
+async function toggleAutoMode() {
+  try {
+    const data = await apiFetch('/api/auto_mode/toggle', { method: 'POST', body: '{}' });
+    document.getElementById('auto-toggle').checked = data.auto_mode;
+    document.getElementById('auto-toggle-status').textContent = data.auto_mode ? 'ВКЛ' : 'ВЫКЛ';
+    showToast(data.auto_mode ? 'Автоматика включена' : 'Автоматика выключена');
+    if (data.auto_mode) {
+      await pollStatus();
+    }
+  } catch {
+    showToast('Ошибка переключения автоматики', 'err');
   }
 }
 
@@ -609,10 +629,8 @@ async function loadSettings() {
     renderHumidityRelayOptions(s.relays ?? [], hc.relay_id ?? 3);
     const cv = s.climate_ventilation ?? {};
     document.getElementById('s-cv-enabled').checked    = cv.enabled ?? false;
-    document.getElementById('s-cv-max-hum').value      = cv.max_humidity ?? 80;
-    document.getElementById('s-cv-min-hum').value      = cv.min_humidity ?? 40;
-    document.getElementById('s-cv-max-temp').value     = cv.max_temperature ?? 35;
-    document.getElementById('s-cv-min-temp').value     = cv.min_temperature ?? 18;
+    document.getElementById('s-cv-target-temp').value   = cv.target_temperature ?? 25.0;
+    document.getElementById('s-cv-temp-hysteresis').value = cv.temperature_hysteresis ?? 4.0;
     document.getElementById('s-cv-min-switch').value   = cv.min_switch_interval_seconds ?? 180;
     renderClimateVentRelayOptions(s.relays ?? [], cv.relay_id ?? 2);
   } catch {
@@ -707,10 +725,8 @@ async function saveSettings() {
     climate_ventilation: {
       enabled:                     document.getElementById('s-cv-enabled').checked,
       relay_id:                    +document.getElementById('s-cv-relay').value,
-      max_humidity:                +document.getElementById('s-cv-max-hum').value,
-      min_humidity:                +document.getElementById('s-cv-min-hum').value,
-      max_temperature:             +document.getElementById('s-cv-max-temp').value,
-      min_temperature:             +document.getElementById('s-cv-min-temp').value,
+      target_temperature:           +document.getElementById('s-cv-target-temp').value,
+      temperature_hysteresis:       +document.getElementById('s-cv-temp-hysteresis').value,
       min_switch_interval_seconds: +document.getElementById('s-cv-min-switch').value,
     },
   };

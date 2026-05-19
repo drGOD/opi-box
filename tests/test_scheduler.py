@@ -181,9 +181,9 @@ class SchedulerTests(unittest.TestCase):
         scheduler._check_humidity_control(Now(1300))
         self.assertEqual(relay.calls, [True, False])
 
-    # --- Climate ventilation tests ---
+    # --- Climate ventilation tests (temperature hysteresis) ---
 
-    def test_climate_ventilation_turns_on_high_humidity(self):
+    def test_climate_ventilation_turns_on_high_temperature(self):
         relay = FakeRelay(state=False)
         scheduler = GrowboxScheduler(
             relays={2: relay},
@@ -192,15 +192,13 @@ class SchedulerTests(unittest.TestCase):
                 "climate_ventilation": {
                     "enabled": True,
                     "relay_id": 2,
-                    "max_humidity": 80,
-                    "min_humidity": 40,
-                    "max_temperature": 35,
-                    "min_temperature": 18,
+                    "target_temperature": 25.0,
+                    "temperature_hysteresis": 4.0,
                     "min_switch_interval_seconds": 0,
                 },
             },
             mode={"auto": True},
-            sensor_hub=FakeSensorHub({"air_humidity": 85, "temperature": 25}),
+            sensor_hub=FakeSensorHub({"temperature": 27.1}),
         )
         scheduler.relay_notify = lambda r: None
 
@@ -211,7 +209,7 @@ class SchedulerTests(unittest.TestCase):
         scheduler._check_climate_ventilation(Now())
         self.assertEqual(relay.calls, [True])
 
-    def test_climate_ventilation_turns_off_low_readings(self):
+    def test_climate_ventilation_turns_off_low_temperature(self):
         relay = FakeRelay(state=True)
         scheduler = GrowboxScheduler(
             relays={2: relay},
@@ -220,15 +218,13 @@ class SchedulerTests(unittest.TestCase):
                 "climate_ventilation": {
                     "enabled": True,
                     "relay_id": 2,
-                    "max_humidity": 80,
-                    "min_humidity": 40,
-                    "max_temperature": 35,
-                    "min_temperature": 18,
+                    "target_temperature": 25.0,
+                    "temperature_hysteresis": 4.0,
                     "min_switch_interval_seconds": 0,
                 },
             },
             mode={"auto": True},
-            sensor_hub=FakeSensorHub({"air_humidity": 35, "temperature": 16}),
+            sensor_hub=FakeSensorHub({"temperature": 22.9}),
         )
         scheduler.relay_notify = lambda r: None
 
@@ -239,7 +235,7 @@ class SchedulerTests(unittest.TestCase):
         scheduler._check_climate_ventilation(Now())
         self.assertEqual(relay.calls, [False])
 
-    def test_climate_ventilation_keeps_state_in_normal_range(self):
+    def test_climate_ventilation_keeps_state_in_hysteresis_band(self):
         relay = FakeRelay(state=False)
         scheduler = GrowboxScheduler(
             relays={2: relay},
@@ -248,15 +244,13 @@ class SchedulerTests(unittest.TestCase):
                 "climate_ventilation": {
                     "enabled": True,
                     "relay_id": 2,
-                    "max_humidity": 80,
-                    "min_humidity": 40,
-                    "max_temperature": 35,
-                    "min_temperature": 18,
+                    "target_temperature": 25.0,
+                    "temperature_hysteresis": 4.0,
                     "min_switch_interval_seconds": 0,
                 },
             },
             mode={"auto": True},
-            sensor_hub=FakeSensorHub({"air_humidity": 60, "temperature": 25}),
+            sensor_hub=FakeSensorHub({"temperature": 25.0}),
         )
         scheduler.relay_notify = lambda r: None
 
@@ -276,15 +270,13 @@ class SchedulerTests(unittest.TestCase):
                 "climate_ventilation": {
                     "enabled": True,
                     "relay_id": 2,
-                    "max_humidity": 80,
-                    "min_humidity": 40,
-                    "max_temperature": 35,
-                    "min_temperature": 18,
+                    "target_temperature": 25.0,
+                    "temperature_hysteresis": 4.0,
                     "min_switch_interval_seconds": 180,
                 },
             },
             mode={"auto": True},
-            sensor_hub=FakeSensorHub({"air_humidity": 85, "temperature": 25}),
+            sensor_hub=FakeSensorHub({"temperature": 27.1}),
         )
         scheduler.relay_notify = lambda r: None
 
@@ -298,7 +290,7 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(relay.calls, [True])
 
         # Try to switch off too soon
-        scheduler.sensor_hub.latest = {"air_humidity": 35, "temperature": 16}
+        scheduler.sensor_hub.latest = {"temperature": 22.9}
         scheduler._check_climate_ventilation(Now(1100))
         self.assertEqual(relay.calls, [True])  # blocked by interval
 
@@ -314,12 +306,10 @@ class SchedulerTests(unittest.TestCase):
                 "climate_ventilation": {
                     "enabled": False,
                     "relay_id": 2,
-                    "max_humidity": 80,
-                    "min_humidity": 40,
                 },
             },
             mode={"auto": True},
-            sensor_hub=FakeSensorHub({"air_humidity": 95}),
+            sensor_hub=FakeSensorHub({"temperature": 30.0}),
         )
 
         class Now:

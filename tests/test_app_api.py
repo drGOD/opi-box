@@ -137,10 +137,8 @@ class AppApiTests(unittest.TestCase):
             "climate_ventilation": {
                 "enabled": True,
                 "relay_id": 2,
-                "max_humidity": 80.0,
-                "min_humidity": 40.0,
-                "max_temperature": 35.0,
-                "min_temperature": 18.0,
+                "target_temperature": 25.0,
+                "temperature_hysteresis": 4.0,
                 "min_switch_interval_seconds": 180,
             },
             "sensors": {"enabled": True},
@@ -230,14 +228,14 @@ class AppApiTests(unittest.TestCase):
             json={
                 "humidity_control": {"target_humidity": 70},
                 "sensors": {"read_interval_seconds": 10},
-                "climate_ventilation": {"max_humidity": 85},
+                "climate_ventilation": {"target_temperature": 27.0},
             },
         )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.runtime.config["humidity_control"]["target_humidity"], 70)
         self.assertEqual(self.runtime.config["sensors"]["read_interval_seconds"], 10)
-        self.assertEqual(self.runtime.config["climate_ventilation"]["max_humidity"], 85)
+        self.assertEqual(self.runtime.config["climate_ventilation"]["target_temperature"], 27.0)
 
     def test_settings_get_includes_climate_ventilation(self):
         response = self.client.get("/api/settings")

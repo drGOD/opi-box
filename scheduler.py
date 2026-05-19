@@ -133,7 +133,7 @@ class GrowboxScheduler:
         )
 
     def _check_climate_ventilation(self, now: datetime) -> None:
-        """Turn ventilation ON/OFF based on humidity and temperature readings."""
+        """Turn ventilation ON/OFF based on temperature with hysteresis."""
         if not self.mode.get("auto", True):
             return
 
@@ -146,37 +146,23 @@ class GrowboxScheduler:
             return
 
         latest = getattr(self.sensor_hub, "latest", None) or {}
-        humidity = latest.get("air_humidity")
         temperature = latest.get("temperature")
-        if humidity is None and temperature is None:
+        if temperature is None:
             return
 
-        max_humidity = float(control.get("max_humidity", 80.0))
-        min_humidity = float(control.get("min_humidity", 40.0))
-        max_temperature = float(control.get("max_temperature", 35.0))
-        min_temperature = float(control.get("min_temperature", 18.0))
+        target = float(control.get("target_temperature", 25.0))
+        hysteresis = max(0.0, float(control.get("temperature_hysteresis", 4.0)))
         min_interval = max(0, int(control.get("min_switch_interval_seconds", 180)))
+        lower_bound = target - hysteresis / 2.0
+        upper_bound = target + hysteresis / 2.0
 
-        needs_on = False
-        if humidity is not None and humidity > max_humidity:
-            needs_on = True
-        if temperature is not None and temperature > max_temperature:
-            needs_on = True
-
-        all_below = True
-        if humidity is not None and humidity >= min_humidity:
-            all_below = False
-        if temperature is not None and temperature >= min_temperature:
-            all_below = False
-
-        if needs_on:
+        desired_state = None
+        if temperature >= upper_bound:
             desired_state = True
-        elif all_below:
+        elif temperature <= lower_bound:
             desired_state = False
-        else:
-            return
 
-        if desired_state == relay.state:
+        if desired_state is None or desired_state == relay.state:
             return
 
         now_ts = now.timestamp()
@@ -186,11 +172,12 @@ class GrowboxScheduler:
         relay.set(desired_state, notify=self.relay_notify)
         self._last_climate_switch_ts = now_ts
         logger.info(
-            "Climate ventilation: %s -> %s (hum=%s, temp=%s)",
+            "Climate ventilation: %s -> %s (temp=%.1f°C, target=%.1f°C, band=%.1f°C)",
             relay.name,
             "ON" if desired_state else "OFF",
-            f"{humidity:.1f}%" if humidity is not None else "N/A",
-            f"{temperature:.1f}C" if temperature is not None else "N/A",
+            temperature,
+            target,
+            hysteresis,
         )
 
     def _resync_relay_states(self, now: datetime) -> None:
