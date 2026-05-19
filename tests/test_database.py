@@ -46,10 +46,10 @@ class DatabaseHistoryTests(unittest.TestCase):
                 conn.execute(
                     """
                     INSERT INTO sensor_readings
-                    (ts, temperature, air_humidity, eco2_ppm, tvoc_ppb, aqi, soil0_pct, soil1_pct)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (ts, temperature, air_humidity, eco2_ppm, tvoc_ppb, aqi)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (now - idx * 10, 20 + idx, 50, 600, 10, 1, 30, 40),
+                    (now - idx * 10, 20 + idx, 50, 600, 10, 1),
                 )
 
         history = database.get_history(hours=1, max_points=5)
@@ -62,10 +62,10 @@ class DatabaseHistoryTests(unittest.TestCase):
             conn.execute(
                 """
                 INSERT INTO sensor_readings
-                (ts, temperature, air_humidity, eco2_ppm, tvoc_ppb, aqi, soil0_pct, soil1_pct)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (ts, temperature, air_humidity, eco2_ppm, tvoc_ppb, aqi)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (old_ts, 18, 40, 500, 9, 1, 20, 30),
+                (old_ts, 18, 40, 500, 9, 1),
             )
             conn.execute(
                 "INSERT INTO relay_events (ts, relay_id, relay_name, state, mode) VALUES (?, ?, ?, ?, ?)",
@@ -79,22 +79,18 @@ class DatabaseHistoryTests(unittest.TestCase):
                 "eco2_ppm": 650,
                 "tvoc_ppb": 11,
                 "aqi": 2,
-                "soil": [
-                    {"channel": 0, "moisture_pct": 33.3},
-                    {"channel": 1, "moisture_pct": 44.4},
-                ],
             }
         )
         database.insert_relay_event(2, "Fan", False, "manual")
         database.cleanup_old_data(keep_days=1)
 
         with database._conn() as conn:
-            sensor_rows = conn.execute("SELECT soil0_pct, soil1_pct FROM sensor_readings").fetchall()
+            sensor_rows = conn.execute("SELECT temperature, air_humidity FROM sensor_readings").fetchall()
             relay_rows = conn.execute("SELECT relay_id, state, mode FROM relay_events").fetchall()
 
         self.assertEqual(len(sensor_rows), 1)
-        self.assertEqual(sensor_rows[0]["soil0_pct"], 33.3)
-        self.assertEqual(sensor_rows[0]["soil1_pct"], 44.4)
+        self.assertEqual(sensor_rows[0]["temperature"], 22.2)
+        self.assertEqual(sensor_rows[0]["air_humidity"], 60.1)
         self.assertEqual(len(relay_rows), 1)
         self.assertEqual(relay_rows[0]["relay_id"], 2)
         self.assertEqual(relay_rows[0]["mode"], "manual")

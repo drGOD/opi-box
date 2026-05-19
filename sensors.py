@@ -1,5 +1,5 @@
 """
-Sensor management: AHT20-compatible air sensor (temp/humidity) and ADS1115 (soil moisture).
+Sensor management: AHT20-compatible air sensor (temp/humidity).
 Runs a background thread; each sensor is optional, failures are logged and skipped.
 """
 import logging
@@ -77,31 +77,9 @@ class AHT20:
 AHT21 = AHT20
 
 
-class ADS1115:
-    REG_CONVERT = 0x00
-    REG_CONFIG = 0x01
-    MUX = {0: 0x4000, 1: 0x5000, 2: 0x6000, 3: 0x7000}
-
-    def __init__(self, bus, addr: int = 0x48):
-        self.bus = bus
-        self.addr = addr
-
-    def read_raw(self, channel: int) -> int:
-        config = 0x8000 | self.MUX[channel] | 0x0200 | 0x0100 | 0x0080 | 0x0003
-        self.bus.write_i2c_block_data(
-            self.addr,
-            self.REG_CONFIG,
-            [(config >> 8) & 0xFF, config & 0xFF],
-        )
-        time.sleep(0.02)
-        data = self.bus.read_i2c_block_data(self.addr, self.REG_CONVERT, 2)
-        raw = (data[0] << 8) | data[1]
-        return raw - 65536 if raw > 32767 else raw
-
-
 class SensorHub:
     """
-    Manage all sensors and poll them in a background daemon thread.
+    Manage air sensor and poll it in a background daemon thread.
     Holds a reference to the shared config dict so live changes are visible.
     on_reading(data) is called after each successful read.
     """
@@ -115,7 +93,6 @@ class SensorHub:
         self._thread = None
         self._bus = None
         self._aht: AHT20 | None = None
-        self._ads: ADS1115 | None = None
         self._setup()
 
     def _scfg(self) -> dict:
@@ -132,19 +109,15 @@ class SensorHub:
             logger.warning("I2C bus unavailable: %s - sensors disabled", exc)
             return
 
-        for name, cls, attr in [
-            ("AHT20", AHT20, "_aht"),
-            ("ADS1115", ADS1115, "_ads"),
-        ]:
-            try:
-                setattr(self, attr, cls(self._bus))
-                logger.info("Sensor %s ready", name)
-            except Exception as exc:
-                logger.warning("Sensor %s init failed: %s", name, exc)
+        try:
+            self._aht = AHT20(self._bus)
+            logger.info("Sensor AHT20 ready")
+        except Exception as exc:
+            logger.warning("Sensor AHT20 init failed: %s", exc)
 
     @property
     def available(self) -> bool:
-        return any([self._aht, self._ads])
+        return self._aht is not None
 
     def start(self) -> None:
         if not self.available:
@@ -174,31 +147,6 @@ class SensorHub:
                 data["air_humidity"] = round(hum, 1)
             except Exception as exc:
                 logger.warning("AHT20 read failed: %s", exc)
-
-        if self._ads:
-            try:
-                dry_vals = self._scfg().get("soil_dry", [26000, 26000])
-                wet_vals = self._scfg().get("soil_wet", [13000, 13000])
-                soil = []
-                for i, ch in enumerate([0, 1]):
-                    try:
-                        raw = self._ads.read_raw(ch)
-                        dry = dry_vals[i] if i < len(dry_vals) else 26000
-                        wet = wet_vals[i] if i < len(wet_vals) else 13000
-                        span = dry - wet
-                        pct = (dry - raw) / span * 100.0 if span else 0.0
-                        soil.append(
-                            {
-                                "channel": ch,
-                                "moisture_pct": round(max(0.0, min(100.0, pct)), 1),
-                                "raw": raw,
-                            }
-                        )
-                    except Exception as exc:
-                        logger.warning("ADS1115 ch%d: %s", ch, exc)
-                data["soil"] = soil
-            except Exception as exc:
-                logger.warning("ADS1115 read failed: %s", exc)
 
         with self._lock:
             self._data = data

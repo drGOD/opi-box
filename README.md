@@ -11,7 +11,6 @@ The current default setup is aimed at Orange Pi Zero 3 with Armbian, but the pro
 - Manual and automatic mode
 - Per-relay schedules
 - AHT20/AHT21 temperature and air humidity sensor on I2C
-- ADS1115 ADC on I2C for soil moisture channels
 - Automatic humidifier control with hysteresis
 - Automatic ventilation by humidity and temperature thresholds
 - USB/V4L2 camera stream and snapshots
@@ -27,8 +26,6 @@ Typical hardware:
 - 5 V power supply with enough current for the board and connected modules
 - Relay module, preferably opto-isolated
 - AHT20/AHT21 I2C sensor, address `0x38`
-- ADS1115 I2C ADC, default address `0x48`
-- Capacitive soil moisture sensors connected to ADS1115 channels `A0` and `A1`
 - USB camera or CSI camera exposed as `/dev/videoN`
 
 Important wiring notes:
@@ -90,28 +87,24 @@ sudo i2cdetect -y 2
 sudo i2cdetect -y 3
 ```
 
-Expected addresses:
+Expected address:
 
 - `38` means AHT20/AHT21 was found
-- `48` means ADS1115 was found
 
 Example successful scan:
 
 ```text
      0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
 30: -- -- -- -- -- -- -- -- 38 -- -- -- -- -- -- --
-40: -- -- -- -- -- -- -- -- 48 -- -- -- -- -- -- --
 ```
 
-If both addresses appear on `/dev/i2c-2`, set:
+If `38` appears on `/dev/i2c-2`, set:
 
 ```json
 "sensors": {
   "enabled": true,
   "i2c_bus": 2,
-  "read_interval_seconds": 30,
-  "soil_dry": [26000, 26000],
-  "soil_wet": [13000, 13000]
+  "read_interval_seconds": 30
 }
 ```
 
@@ -306,9 +299,7 @@ Full example:
   "sensors": {
     "enabled": true,
     "i2c_bus": 2,
-    "read_interval_seconds": 30,
-    "soil_dry": [26000, 26000],
-    "soil_wet": [13000, 13000]
+    "read_interval_seconds": 30
   }
 }
 ```
@@ -320,30 +311,6 @@ Config notes:
 - `gpio_pin`: GPIO line offset from `gpioinfo`, not physical header pin number.
 - `active_low`: set `true` for most low-level-trigger relay modules.
 - `sensors.i2c_bus`: number from `/dev/i2c-N`.
-- `soil_dry` and `soil_wet`: raw ADS1115 calibration values for each soil channel.
-
-## Soil Sensor Calibration
-
-The ADS1115 raw values depend on the exact sensor, voltage, soil, and wiring. Calibrate before trusting percentages.
-
-1. Put the soil sensor in dry air or very dry soil.
-2. Read current sensor data from the API:
-
-```bash
-curl http://127.0.0.1:8080/api/sensors
-```
-
-3. Copy the raw values into `soil_dry`.
-4. Put the sensor in wet soil or water according to your sensor's safety limits.
-5. Copy the raw values into `soil_wet`.
-6. Restart the service or save settings through the UI.
-
-Example:
-
-```json
-"soil_dry": [26000, 25500],
-"soil_wet": [13000, 12800]
-```
 
 ## Service Management
 
@@ -518,7 +485,6 @@ Search for:
 
 - `I2C bus unavailable`
 - `Sensor AHT20 init failed`
-- `Sensor ADS1115 init failed`
 - `GPIO init failed`
 - `Cannot open camera device`
 

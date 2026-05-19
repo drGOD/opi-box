@@ -19,9 +19,7 @@ def init_db() -> None:
                 air_humidity REAL,
                 eco2_ppm     INTEGER,
                 tvoc_ppb     INTEGER,
-                aqi          INTEGER,
-                soil0_pct    REAL,
-                soil1_pct    REAL
+                aqi          INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_sr_ts ON sensor_readings(ts);
 
@@ -50,17 +48,13 @@ def _conn():
 
 
 def insert_sensor_reading(data: dict) -> None:
-    soil = data.get("soil", [])
-    soil0 = next((s["moisture_pct"] for s in soil if s["channel"] == 0), None)
-    soil1 = next((s["moisture_pct"] for s in soil if s["channel"] == 1), None)
     with _conn() as conn:
         conn.execute(
             """INSERT INTO sensor_readings
-               (ts, temperature, air_humidity, eco2_ppm, tvoc_ppb, aqi, soil0_pct, soil1_pct)
-               VALUES (?,?,?,?,?,?,?,?)""",
+               (ts, temperature, air_humidity, eco2_ppm, tvoc_ppb, aqi)
+               VALUES (?,?,?,?,?,?)""",
             (time.time(), data.get("temperature"), data.get("air_humidity"),
-             data.get("eco2_ppm"), data.get("tvoc_ppb"), data.get("aqi"),
-             soil0, soil1),
+             data.get("eco2_ppm"), data.get("tvoc_ppb"), data.get("aqi")),
         )
 
 
@@ -81,7 +75,7 @@ def get_history(hours: float = 24, max_points: int = 400) -> dict:
         # ── Sensor readings (downsampled) ─────────────────────────────────
         rows = conn.execute(
             """SELECT ts, temperature, air_humidity, eco2_ppm, tvoc_ppb,
-                      aqi, soil0_pct, soil1_pct
+                      aqi
                FROM sensor_readings WHERE ts >= ? ORDER BY ts""",
             (since,),
         ).fetchall()

@@ -37,8 +37,6 @@ DEFAULT_CONFIG = {
         "enabled": True,
         "i2c_bus": 2,
         "read_interval_seconds": 30,
-        "soil_dry": [26000, 26000],
-        "soil_wet": [13000, 13000],
     },
 }
 

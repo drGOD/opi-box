@@ -161,18 +161,6 @@ function renderSensorMetrics(d) {
 
   if (d.temperature  != null) grid.appendChild(tile('🌡', 'Температура',     `${d.temperature} °C`));
   if (d.air_humidity != null) grid.appendChild(tile('💧', 'Влажность возд.',  `${d.air_humidity} %`));
-  if (Array.isArray(d.soil)) {
-    d.soil.forEach(s => {
-      const pct = s.moisture_pct;
-      const bar = `<div class="soil-bar"><div class="soil-fill" style="width:${pct}%"></div></div>`;
-      const el  = document.createElement('div');
-      el.className = 'metric-tile metric-tile--wide';
-      el.innerHTML = `<div class="metric-icon">🪴</div>
-                      <div class="metric-value">${pct} %</div>
-                      <div class="metric-label">Почва A${s.channel}</div>${bar}`;
-      grid.appendChild(el);
-    });
-  }
 }
 
 setInterval(pollSensors, 15000);
@@ -227,22 +215,6 @@ function initCharts() {
     }},
   });
 
-  // Soil moisture
-  charts.soil = new Chart(document.getElementById('chart-soil'), {
-    type: 'line',
-    data: { datasets: [
-      { label: 'Почва A0 %', data: [], borderColor: '#86efac',
-        backgroundColor: 'rgba(134,239,172,0.08)', fill: true,
-        tension: 0.3, pointRadius: 0, borderWidth: 2 },
-      { label: 'Почва A1 %', data: [], borderColor: '#22d3ee',
-        backgroundColor: 'rgba(34,211,238,0.08)', fill: true,
-        tension: 0.3, pointRadius: 0, borderWidth: 2 },
-    ]},
-    options: { ...CHART_DEFAULTS, scales: { x: CHART_DEFAULTS.scales.x,
-      y: { ...yScale('#94a3b8', 'left'), min: 0, max: 100 },
-    }},
-  });
-
   // Relay states (step lines)
   charts.relays = new Chart(document.getElementById('chart-relays'), {
     type: 'line',
@@ -276,10 +248,6 @@ async function loadCharts() {
     charts.air.data.datasets[0].data = pts('temperature');
     charts.air.data.datasets[1].data = pts('air_humidity');
     charts.air.update('none');
-
-    charts.soil.data.datasets[0].data = pts('soil0_pct');
-    charts.soil.data.datasets[1].data = pts('soil1_pct');
-    charts.soil.update('none');
 
     // Relay charts
     const rd = res.relays || {};
@@ -619,12 +587,6 @@ async function loadSettings() {
     document.getElementById('s-sens-enabled').checked  = sc.enabled ?? true;
     document.getElementById('s-sens-bus').value        = sc.i2c_bus ?? 2;
     document.getElementById('s-sens-interval').value   = sc.read_interval_seconds ?? 30;
-    const dry = sc.soil_dry ?? [26000, 26000];
-    const wet = sc.soil_wet ?? [13000, 13000];
-    document.getElementById('s-soil0-dry').value = dry[0];
-    document.getElementById('s-soil0-wet').value = wet[0];
-    document.getElementById('s-soil1-dry').value = dry[1];
-    document.getElementById('s-soil1-wet').value = wet[1];
     renderRelaySettings(s.relays ?? []);
     renderHumidityRelayOptions(s.relays ?? [], hc.relay_id ?? 3);
     const cv = s.climate_ventilation ?? {};
@@ -717,10 +679,6 @@ async function saveSettings() {
       enabled:               document.getElementById('s-sens-enabled').checked,
       i2c_bus:               +document.getElementById('s-sens-bus').value,
       read_interval_seconds: +document.getElementById('s-sens-interval').value,
-      soil_dry: [+document.getElementById('s-soil0-dry').value,
-                 +document.getElementById('s-soil1-dry').value],
-      soil_wet: [+document.getElementById('s-soil0-wet').value,
-                 +document.getElementById('s-soil1-wet').value],
     },
     climate_ventilation: {
       enabled:                     document.getElementById('s-cv-enabled').checked,
