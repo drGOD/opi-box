@@ -63,8 +63,12 @@ class ConfigTests(unittest.TestCase):
 
         self.assertFalse(loaded["climate_ventilation"]["enabled"])
         self.assertEqual(loaded["climate_ventilation"]["relay_id"], 5)
-        self.assertEqual(loaded["climate_ventilation"]["target_temperature"], 25.0)
-        self.assertEqual(loaded["climate_ventilation"]["temperature_hysteresis"], 4.0)
+        self.assertEqual(loaded["climate_ventilation"]["target_temperature"], 26.0)
+        self.assertEqual(loaded["climate_ventilation"]["temperature_hysteresis"], 2.0)
+        self.assertEqual(loaded["climate_ventilation"]["max_humidity"], 60.0)
+        self.assertEqual(loaded["climate_ventilation"]["humidity_hysteresis"], 5.0)
+        self.assertEqual(loaded["climate_ventilation"]["min_temperature"], 18.0)
+        self.assertEqual(loaded["sensors"]["stale_after_seconds"], 60)
 
 
 if __name__ == "__main__":

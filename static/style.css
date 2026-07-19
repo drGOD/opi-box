@@ -484,6 +484,23 @@ input:focus { border-color: var(--accent); }
 .manual-banner strong { color: #fbbf24; }
 .manual-banner-desc  { font-size: .82rem; color: var(--text2); margin-top: 3px; }
 
+.climate-alert-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1px solid var(--danger);
+  background: rgba(248,113,113,.10);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin-bottom: 16px;
+}
+.climate-alert-banner strong { color: var(--danger); }
+.climate-alert-banner.warning {
+  border-color: #fbbf24;
+  background: rgba(251,191,36,.10);
+}
+.climate-alert-banner.warning strong { color: #fbbf24; }
+
 /* ── Charts ──────────────────────────────────────────────────────────────── */
 
 .chart-range {

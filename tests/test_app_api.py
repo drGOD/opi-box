@@ -56,6 +56,7 @@ class FakeSensorHub:
     def __init__(self, available=True, latest=None):
         self.available = available
         self.latest = latest or {}
+        self.last_success_at = 1234.0
 
 
 class FakeScheduler:
@@ -69,6 +70,20 @@ class FakeScheduler:
 
     def _check_climate_ventilation(self, now):
         return None
+
+    def _check_climate_control(self, now):
+        return None
+
+    def climate_status(self):
+        return {
+            "enabled": True,
+            "relay_id": 2,
+            "ventilation_expected": True,
+            "active_reasons": ["temperature"],
+        }
+
+    def alarms(self):
+        return []
 
 
 class FakeDatabase:
@@ -186,6 +201,11 @@ class AppApiTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(len(payload["relays"]), 3)
         self.assertEqual(payload["humidity_control"]["relay_id"], 3)
+        self.assertEqual(payload["climate_ventilation"]["active_reasons"], ["temperature"])
+        self.assertEqual(payload["alarms"], [])
+        fan = next(relay for relay in payload["relays"] if relay["id"] == 2)
+        self.assertTrue(fan["climate_controlled"])
+        self.assertTrue(fan["climate_expected"])
 
     def test_snapshot_endpoint_returns_jpeg(self):
         response = self.client.get("/api/snapshot")
@@ -237,6 +257,42 @@ class AppApiTests(unittest.TestCase):
         self.assertEqual(self.runtime.config["sensors"]["read_interval_seconds"], 10)
         self.assertEqual(self.runtime.config["climate_ventilation"]["target_temperature"], 27.0)
 
+    def test_settings_update_rejects_invalid_climate_ranges(self):
+        bad_temperature = self.client.post(
+            "/api/settings",
+            json={"climate_ventilation": {"min_temperature": 36, "max_temperature": 35}},
+        )
+        bad_stale_timeout = self.client.post(
+            "/api/settings",
+            json={"sensors": {"read_interval_seconds": 30, "stale_after_seconds": 30}},
+        )
+
+        self.assertEqual(bad_temperature.status_code, 400)
+        self.assertIn("Минимальная температура", bad_temperature.get_json()["error"])
+        self.assertEqual(bad_stale_timeout.status_code, 400)
+        self.assertIn("Таймаут датчика", bad_stale_timeout.get_json()["error"])
+
+    def test_settings_update_rejects_conflicting_temperature_thresholds(self):
+        response = self.client.post(
+            "/api/settings",
+            json={
+                "climate_ventilation": {
+                    "target_temperature": 34,
+                    "temperature_hysteresis": 4,
+                    "max_temperature": 35,
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Порог перегрева", response.get_json()["error"])
+
+    def test_settings_update_rejects_non_object_payload(self):
+        response = self.client.post("/api/settings", json=[])
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("JSON", response.get_json()["error"])
+
     def test_settings_get_includes_climate_ventilation(self):
         response = self.client.get("/api/settings")
 
@@ -284,12 +340,13 @@ class AppApiTests(unittest.TestCase):
             Image.new("RGB", (32, 24), color=color).save(image_path)
 
         response = self.client.get("/api/timelapse/gif?duration=200")
-        response.close()
+        response_data = response.get_data()
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.mimetype, "image/gif")
         self.assertIn("attachment", response.headers["Content-Disposition"])
-        self.assertTrue(response.data.startswith(b"GIF"))
+        self.assertTrue(response_data.startswith(b"GIF"))
+        response.close()
 
     def test_timelapse_gif_endpoint_filters_by_date_range(self):
         try:
@@ -308,11 +365,12 @@ class AppApiTests(unittest.TestCase):
         response = self.client.get(
             "/api/timelapse/gif?start=2026-04-05T12:00:00&end=2026-04-05T12:00:01"
         )
-        response.close()
+        response_data = response.get_data()
 
         self.assertEqual(response.status_code, 200)
-        gif = Image.open(io.BytesIO(response.data))
+        gif = Image.open(io.BytesIO(response_data))
         self.assertEqual(gif.n_frames, 2)
+        response.close()
 
     def test_timelapse_gif_endpoint_handles_empty_archive(self):
         response = self.client.get("/api/timelapse/gif")

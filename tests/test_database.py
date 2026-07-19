@@ -37,6 +37,7 @@ class DatabaseHistoryTests(unittest.TestCase):
         self.assertEqual(events[0]["state"], 1)
         self.assertAlmostEqual(events[0]["ts"], since, delta=2)
         self.assertEqual(events[1]["state"], 0)
+        self.assertEqual(events[1]["mode"], "auto")
 
     def test_get_history_downsamples_sensor_points(self):
         now = time.time()

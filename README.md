@@ -281,25 +281,29 @@ Full example:
     {"relay_id": 3, "enabled": false, "on_time": "00:00", "off_time": "00:00"}
   ],
   "humidity_control": {
-    "enabled": false,
+    "enabled": true,
     "relay_id": 3,
-    "target_humidity": 65.0,
-    "hysteresis": 6.0,
+    "target_humidity": 52.5,
+    "hysteresis": 5.0,
     "min_switch_interval_seconds": 180
   },
   "climate_ventilation": {
     "enabled": true,
     "relay_id": 2,
-    "max_humidity": 80.0,
-    "min_humidity": 40.0,
+    "target_temperature": 26.0,
+    "temperature_hysteresis": 2.0,
+    "max_humidity": 60.0,
+    "humidity_hysteresis": 5.0,
     "max_temperature": 35.0,
     "min_temperature": 18.0,
+    "out_of_range_alarm_seconds": 1800,
     "min_switch_interval_seconds": 180
   },
   "sensors": {
     "enabled": true,
     "i2c_bus": 2,
-    "read_interval_seconds": 30
+    "read_interval_seconds": 10,
+    "stale_after_seconds": 60
   }
 }
 ```
@@ -311,6 +315,11 @@ Config notes:
 - `gpio_pin`: GPIO line offset from `gpioinfo`, not physical header pin number.
 - `active_low`: set `true` for most low-level-trigger relay modules.
 - `sensors.i2c_bus`: number from `/dev/i2c-N`.
+- Humidifier thresholds are `target_humidity ± hysteresis / 2` (50/55% in the example).
+- Ventilation uses independent temperature (27/25°C) and humidity (60/55%) requests; it stays on while either request is active.
+- At or below `min_temperature`, the humidity ventilation request is blocked. At `max_temperature`, an overheat alarm is raised and clears 2°C below that threshold.
+- If no sensor read succeeds within `stale_after_seconds`, the humidifier is switched off and ventilation is switched on. The light state is not changed.
+- Climate relay automation pauses in manual mode, while alarms and expected states continue to update.
 
 ## Service Management
 

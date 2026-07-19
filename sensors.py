@@ -88,7 +88,8 @@ class SensorHub:
         self._config = config
         self._on_reading = on_reading
         self._lock = threading.Lock()
-        self._data: dict | None = None
+        self._data: dict | None = {}
+        self._last_success_at: float | None = None
         self._running = False
         self._thread = None
         self._bus = None
@@ -148,8 +149,10 @@ class SensorHub:
             except Exception as exc:
                 logger.warning("AHT20 read failed: %s", exc)
 
-        with self._lock:
-            self._data = data
+        if data:
+            with self._lock:
+                self._data = data
+                self._last_success_at = time.time()
 
         if self._on_reading and data:
             try:
@@ -161,6 +164,11 @@ class SensorHub:
     def latest(self) -> dict | None:
         with self._lock:
             return self._data
+
+    @property
+    def last_success_at(self) -> float | None:
+        with self._lock:
+            return self._last_success_at
 
     def close(self) -> None:
         self._running = False

@@ -33,8 +33,17 @@ class FakeCamera:
 
 
 class FakeSensorHub:
-    def __init__(self, latest=None):
+    def __init__(self, latest=None, last_success_at=None):
         self.latest = latest or {}
+        self.last_success_at = last_success_at
+
+
+class Now:
+    def __init__(self, ts):
+        self._ts = ts
+
+    def timestamp(self):
+        return self._ts
 
 
 class SchedulerTests(unittest.TestCase):
@@ -318,6 +327,176 @@ class SchedulerTests(unittest.TestCase):
 
         scheduler._check_climate_ventilation(Now())
         self.assertEqual(relay.calls, [])
+
+    def _coordinated_scheduler(self, *, temperature, humidity, fan=False, humidifier=False, auto=True):
+        fan_relay = FakeRelay(state=fan)
+        fan_relay.name = "Fan"
+        humidifier_relay = FakeRelay(state=humidifier)
+        humidifier_relay.name = "Humidifier"
+        scheduler = GrowboxScheduler(
+            relays={2: fan_relay, 3: humidifier_relay},
+            camera=FakeCamera(),
+            config={
+                "humidity_control": {
+                    "enabled": True,
+                    "relay_id": 3,
+                    "target_humidity": 52.5,
+                    "hysteresis": 5,
+                    "min_switch_interval_seconds": 0,
+                },
+                "climate_ventilation": {
+                    "enabled": True,
+                    "relay_id": 2,
+                    "target_temperature": 26,
+                    "temperature_hysteresis": 2,
+                    "max_humidity": 60,
+                    "humidity_hysteresis": 5,
+                    "min_temperature": 18,
+                    "max_temperature": 35,
+                    "out_of_range_alarm_seconds": 1800,
+                    "min_switch_interval_seconds": 0,
+                },
+                "sensors": {"stale_after_seconds": 60},
+            },
+            mode={"auto": auto},
+            sensor_hub=FakeSensorHub(
+                {"temperature": temperature, "air_humidity": humidity},
+                last_success_at=None,
+            ),
+        )
+        return scheduler, fan_relay, humidifier_relay
+
+    def test_coordinated_ventilation_uses_humidity_hysteresis(self):
+        scheduler, fan, _humidifier = self._coordinated_scheduler(
+            temperature=24, humidity=61, fan=False
+        )
+
+        scheduler._check_climate_control(Now(1000))
+        self.assertEqual(fan.calls, [True])
+        self.assertEqual(scheduler.climate_status()["active_reasons"], ["humidity"])
+
+        scheduler.sensor_hub.latest["air_humidity"] = 57
+        scheduler._check_climate_control(Now(1100))
+        self.assertEqual(fan.calls, [True])
+
+        scheduler.sensor_hub.latest["air_humidity"] = 55
+        scheduler._check_climate_control(Now(1200))
+        self.assertEqual(fan.calls, [True, False])
+
+    def test_temperature_and_humidity_requests_are_combined(self):
+        scheduler, fan, humidifier = self._coordinated_scheduler(
+            temperature=28, humidity=61, fan=False, humidifier=True
+        )
+        events = []
+        scheduler.relay_notify = lambda relay, reason: events.append((relay.name, relay.state, reason))
+
+        scheduler._check_climate_control(Now(1000))
+
+        self.assertEqual(fan.calls, [True])
+        self.assertEqual(humidifier.calls, [False])
+        self.assertCountEqual(
+            scheduler.climate_status()["active_reasons"], ["temperature", "humidity"]
+        )
+        self.assertIn(("Fan", True, "auto_climate_temperature_humidity"), events)
+        self.assertIn(("Humidifier", False, "auto_humidity_high"), events)
+
+    def test_temperature_driven_ventilation_allows_humidifier(self):
+        scheduler, fan, humidifier = self._coordinated_scheduler(
+            temperature=28, humidity=49, fan=False, humidifier=False
+        )
+
+        scheduler._check_climate_control(Now(1000))
+
+        self.assertEqual(fan.calls, [True])
+        self.assertEqual(humidifier.calls, [True])
+        self.assertEqual(scheduler.climate_status()["active_reasons"], ["temperature"])
+
+    def test_minimum_temperature_blocks_humidity_ventilation(self):
+        scheduler, fan, humidifier = self._coordinated_scheduler(
+            temperature=18, humidity=70, fan=True, humidifier=False
+        )
+
+        scheduler._check_climate_control(Now(1000))
+
+        self.assertEqual(fan.calls, [False])
+        self.assertEqual(humidifier.calls, [])
+        self.assertFalse(scheduler.climate_status()["ventilation_expected"])
+        self.assertIn("low_temperature", {alarm["code"] for alarm in scheduler.alarms()})
+
+    def test_stale_sensor_forces_safe_relay_states(self):
+        scheduler, fan, humidifier = self._coordinated_scheduler(
+            temperature=24, humidity=52, fan=False, humidifier=True
+        )
+        scheduler.sensor_hub.last_success_at = 900
+
+        scheduler._check_climate_control(Now(1000))
+
+        self.assertEqual(fan.calls, [True])
+        self.assertEqual(humidifier.calls, [False])
+        self.assertEqual(scheduler.climate_status()["active_reasons"], ["sensor_failsafe"])
+        self.assertIn("sensor_stale", {alarm["code"] for alarm in scheduler.alarms()})
+
+    def test_startup_without_measurement_preserves_persisted_relay_states(self):
+        scheduler, fan, humidifier = self._coordinated_scheduler(
+            temperature=24, humidity=52, fan=True, humidifier=True
+        )
+        scheduler.sensor_hub.latest = {}
+
+        scheduler._check_climate_control(Now(scheduler._started_at + 20))
+
+        self.assertEqual(fan.calls, [])
+        self.assertEqual(humidifier.calls, [])
+        self.assertTrue(scheduler.climate_status()["ventilation_expected"])
+        self.assertEqual(
+            scheduler.climate_status()["active_reasons"], ["sensor_initializing"]
+        )
+
+    def test_manual_mode_updates_alarms_without_switching_relays(self):
+        scheduler, fan, humidifier = self._coordinated_scheduler(
+            temperature=35.2, humidity=70, fan=False, humidifier=True, auto=False
+        )
+
+        scheduler._check_climate_control(Now(1000))
+
+        self.assertEqual(fan.calls, [])
+        self.assertEqual(humidifier.calls, [])
+        self.assertIn("overheat", {alarm["code"] for alarm in scheduler.alarms()})
+
+        scheduler.sensor_hub.latest["temperature"] = 32.9
+        scheduler.sensor_hub.latest["air_humidity"] = 55
+        scheduler.sensor_hub.last_success_at = 1100
+        scheduler._check_climate_control(Now(1100))
+        self.assertNotIn("overheat", {alarm["code"] for alarm in scheduler.alarms()})
+
+    def test_overheat_alarm_uses_exact_35_and_33_degree_boundaries(self):
+        scheduler, _fan, _humidifier = self._coordinated_scheduler(
+            temperature=35, humidity=55, fan=True
+        )
+
+        scheduler._check_climate_control(Now(1000))
+        self.assertIn("overheat", {alarm["code"] for alarm in scheduler.alarms()})
+
+        scheduler.sensor_hub.latest["temperature"] = 33
+        scheduler.sensor_hub.last_success_at = 1100
+        scheduler._check_climate_control(Now(1100))
+        self.assertNotIn("overheat", {alarm["code"] for alarm in scheduler.alarms()})
+
+    def test_humidity_alarm_requires_continuous_delay(self):
+        scheduler, _fan, _humidifier = self._coordinated_scheduler(
+            temperature=24, humidity=70, fan=False
+        )
+
+        scheduler._check_climate_control(Now(1000))
+        self.assertNotIn("humidity_out_of_range", {a["code"] for a in scheduler.alarms()})
+
+        scheduler.sensor_hub.last_success_at = 2801
+        scheduler._check_climate_control(Now(2801))
+        self.assertIn("humidity_out_of_range", {a["code"] for a in scheduler.alarms()})
+
+        scheduler.sensor_hub.latest["air_humidity"] = 55
+        scheduler.sensor_hub.last_success_at = 2820
+        scheduler._check_climate_control(Now(2820))
+        self.assertNotIn("humidity_out_of_range", {a["code"] for a in scheduler.alarms()})
 
     # --- Resync tests ---
 

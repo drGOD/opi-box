@@ -14,7 +14,7 @@ from flask import Flask, Response, jsonify, render_template, request, send_file
 
 import database
 from camera import Camera, TIMELAPSE_DIR
-from config import load_config, save_config
+from config import DEFAULT_CONFIG, load_config, save_config
 from relay import Relay
 from scheduler import GrowboxScheduler
 from sensors import SensorHub
@@ -29,6 +29,91 @@ _TIMELAPSE_TS_RE = re.compile(r"(\d{8}_\d{6})")
 _GIF_FPS = 24
 _GIF_FRAME_DURATION_MS = round(1000 / _GIF_FPS)
 _GIF_MAX_SIZE = (960, 720)
+
+
+def _validate_control_settings(cfg: dict) -> str | None:
+    """Normalize numeric control settings and return a user-facing error."""
+    numeric_fields = {
+        "humidity_control": {
+            "target_humidity": (float, 0.0, 100.0),
+            "hysteresis": (float, 0.1, 30.0),
+            "min_switch_interval_seconds": (int, 0, 3600),
+        },
+        "climate_ventilation": {
+            "target_temperature": (float, 0.0, 50.0),
+            "temperature_hysteresis": (float, 0.1, 20.0),
+            "max_humidity": (float, 0.0, 100.0),
+            "humidity_hysteresis": (float, 0.1, 30.0),
+            "min_temperature": (float, 0.0, 40.0),
+            "max_temperature": (float, 1.0, 60.0),
+            "out_of_range_alarm_seconds": (int, 60, 86400),
+            "min_switch_interval_seconds": (int, 0, 3600),
+        },
+        "sensors": {
+            "read_interval_seconds": (int, 1, 3600),
+            "stale_after_seconds": (int, 2, 3600),
+        },
+    }
+    labels = {
+        "target_humidity": "Целевая влажность",
+        "hysteresis": "Гистерезис увлажнителя",
+        "min_switch_interval_seconds": "Пауза между переключениями",
+        "target_temperature": "Целевая температура",
+        "temperature_hysteresis": "Гистерезис температуры",
+        "max_humidity": "Порог включения вытяжки по влажности",
+        "humidity_hysteresis": "Гистерезис вытяжки по влажности",
+        "min_temperature": "Минимальная температура",
+        "max_temperature": "Порог перегрева",
+        "out_of_range_alarm_seconds": "Задержка климатической тревоги",
+        "read_interval_seconds": "Интервал датчика",
+        "stale_after_seconds": "Таймаут датчика",
+    }
+    try:
+        for section, fields in numeric_fields.items():
+            values = cfg.setdefault(section, {})
+            for key, (cast, minimum, maximum) in fields.items():
+                if key not in values and key in DEFAULT_CONFIG.get(section, {}):
+                    values[key] = DEFAULT_CONFIG[section][key]
+                if key not in values or isinstance(values[key], bool):
+                    return f"Отсутствует или некорректно поле: {labels[key]}"
+                value = cast(values[key])
+                if not minimum <= value <= maximum:
+                    return f"{labels[key]}: допустимый диапазон {minimum}–{maximum}"
+                values[key] = value
+    except (TypeError, ValueError, OverflowError):
+        return "Числовые настройки климата имеют некорректный формат"
+
+    humidity = cfg["humidity_control"]
+    humidity_lower = humidity["target_humidity"] - humidity["hysteresis"] / 2.0
+    humidity_upper = humidity["target_humidity"] + humidity["hysteresis"] / 2.0
+    if humidity_lower < 0 or humidity_upper > 100:
+        return "Границы увлажнителя должны находиться в диапазоне 0–100%"
+
+    ventilation = cfg["climate_ventilation"]
+    ventilation_humidity_off = (
+        ventilation["max_humidity"] - ventilation["humidity_hysteresis"]
+    )
+    temperature_off = (
+        ventilation["target_temperature"]
+        - ventilation["temperature_hysteresis"] / 2.0
+    )
+    temperature_on = (
+        ventilation["target_temperature"]
+        + ventilation["temperature_hysteresis"] / 2.0
+    )
+    if ventilation_humidity_off < 0:
+        return "Нижняя граница вытяжки по влажности не может быть меньше 0%"
+    if ventilation["min_temperature"] >= ventilation["max_temperature"]:
+        return "Минимальная температура должна быть ниже порога перегрева"
+    if ventilation["min_temperature"] >= temperature_off:
+        return "Защитный минимум температуры должен быть ниже порога выключения вытяжки"
+    if ventilation["max_temperature"] <= temperature_on:
+        return "Порог перегрева должен быть выше порога включения вытяжки"
+
+    sensors = cfg["sensors"]
+    if sensors["stale_after_seconds"] < sensors["read_interval_seconds"] * 2:
+        return "Таймаут датчика должен быть не меньше двух интервалов измерения"
+    return None
 
 
 def _timelapse_timestamp(path: Path) -> datetime | None:
@@ -248,6 +333,14 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
             elif humidity >= upper_bound:
                 desired_state = False
 
+        climate_status = (
+            runtime.scheduler.climate_status()
+            if hasattr(runtime.scheduler, "climate_status")
+            else {}
+        )
+        if "humidifier_expected" in climate_status:
+            desired_state = climate_status["humidifier_expected"]
+
         return {
             "enabled": bool(control.get("enabled")),
             "relay_id": relay_id,
@@ -257,6 +350,7 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
             "lower_bound": lower_bound,
             "upper_bound": upper_bound,
             "desired_state": desired_state,
+            "sensor_stale": climate_status.get("sensor_stale", False),
         }
 
     def persist_relay_state(relay: Relay, event_mode: str = "manual") -> None:
@@ -267,15 +361,23 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
                 relay_cfg["state"] = relay.state
         runtime.config_saver(cfg)
 
-    runtime.scheduler.relay_notify = lambda relay_obj: persist_relay_state(relay_obj, "auto")
+    runtime.scheduler.relay_notify = (
+        lambda relay_obj, event_mode="auto": persist_relay_state(relay_obj, event_mode)
+    )
 
     def apply_auto_mode() -> None:
         for relay_id, should_on in schedule_expected_states().items():
             relay = runtime.relays.get(relay_id)
             if relay is not None:
-                relay.set(should_on, notify=lambda relay_obj: persist_relay_state(relay_obj, "auto"))
-        runtime.scheduler._check_humidity_control(datetime.now())
-        runtime.scheduler._check_climate_ventilation(datetime.now())
+                relay.set(
+                    should_on,
+                    notify=lambda relay_obj: persist_relay_state(relay_obj, "auto_schedule"),
+                )
+        if hasattr(runtime.scheduler, "_check_climate_control"):
+            runtime.scheduler._check_climate_control(datetime.now())
+        else:
+            runtime.scheduler._check_humidity_control(datetime.now())
+            runtime.scheduler._check_climate_ventilation(datetime.now())
         logger.info("Auto mode applied")
 
     apply_auto_mode()
@@ -288,6 +390,12 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
     def api_status():
         expected = schedule_expected_states()
         humidity_status = humidity_control_status()
+        climate_status = (
+            runtime.scheduler.climate_status()
+            if hasattr(runtime.scheduler, "climate_status")
+            else {}
+        )
+        alarms = runtime.scheduler.alarms() if hasattr(runtime.scheduler, "alarms") else []
         relay_list = []
         for relay in runtime.relays.values():
             relay_data = relay.to_dict()
@@ -296,6 +404,17 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
             relay_data["humidity_expected"] = (
                 humidity_status["desired_state"] if relay.id == humidity_status["relay_id"] else None
             )
+            relay_data["climate_controlled"] = (
+                relay.id == climate_status.get("relay_id") and climate_status.get("enabled", False)
+            )
+            relay_data["climate_reasons"] = (
+                climate_status.get("active_reasons", []) if relay_data["climate_controlled"] else []
+            )
+            relay_data["climate_expected"] = (
+                climate_status.get("ventilation_expected")
+                if relay_data["climate_controlled"]
+                else None
+            )
             relay_list.append(relay_data)
         return jsonify({
             "ok": True,
@@ -303,6 +422,8 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
             "relays": relay_list,
             "auto_mode": runtime.mode["auto"],
             "humidity_control": humidity_status,
+            "climate_ventilation": climate_status,
+            "alarms": alarms,
             "time": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
             "timelapse_enabled": runtime.config.get("timelapse_enabled", True),
             "timelapse_interval": runtime.config.get("timelapse_interval_minutes", 30),
@@ -366,6 +487,7 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
         return jsonify({
             "available": runtime.sensor_hub.available,
             "data": runtime.sensor_hub.latest or {},
+            "last_success_at": getattr(runtime.sensor_hub, "last_success_at", None),
         })
 
     @app.route("/api/schedule")
@@ -408,7 +530,9 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
 
     @app.route("/api/settings", methods=["POST"])
     def update_settings():
-        data = request.get_json(silent=True) or {}
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"error": "Ожидается объект настроек в формате JSON"}), 400
         cfg = runtime.config_loader()
         allowed = [
             "timelapse_enabled", "timelapse_interval_minutes",
@@ -423,6 +547,9 @@ def create_app(runtime: Optional[Runtime] = None) -> Flask:
             cfg.setdefault("humidity_control", {}).update(data["humidity_control"])
         if "climate_ventilation" in data and isinstance(data["climate_ventilation"], dict):
             cfg.setdefault("climate_ventilation", {}).update(data["climate_ventilation"])
+        validation_error = _validate_control_settings(cfg)
+        if validation_error:
+            return jsonify({"error": validation_error}), 400
         runtime.config_saver(cfg)
         runtime.config.update(cfg)
         runtime.scheduler.config = cfg

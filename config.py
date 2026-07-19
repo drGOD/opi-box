@@ -22,21 +22,27 @@ DEFAULT_CONFIG = {
     "humidity_control": {
         "enabled": False,
         "relay_id": 3,
-        "target_humidity": 65.0,
-        "hysteresis": 6.0,
+        "target_humidity": 52.5,
+        "hysteresis": 5.0,
         "min_switch_interval_seconds": 180,
     },
     "climate_ventilation": {
         "enabled": True,
         "relay_id": 2,
-        "target_temperature": 25.0,
-        "temperature_hysteresis": 4.0,
+        "target_temperature": 26.0,
+        "temperature_hysteresis": 2.0,
+        "max_humidity": 60.0,
+        "humidity_hysteresis": 5.0,
+        "min_temperature": 18.0,
+        "max_temperature": 35.0,
+        "out_of_range_alarm_seconds": 1800,
         "min_switch_interval_seconds": 180,
     },
     "sensors": {
         "enabled": True,
         "i2c_bus": 2,
         "read_interval_seconds": 30,
+        "stale_after_seconds": 60,
     },
 }
 

@@ -98,21 +98,24 @@ def get_history(hours: float = 24, max_points: int = 400) -> dict:
 
             # Last known state before the window (for correct step-line start)
             prior = conn.execute(
-                """SELECT ts, state FROM relay_events
+                """SELECT ts, state, mode FROM relay_events
                    WHERE relay_id=? AND ts<? ORDER BY ts DESC LIMIT 1""",
                 (rid, since),
             ).fetchone()
 
             events: list = []
             if prior:
-                events.append({"ts": since, "state": prior["state"]})
+                events.append({"ts": since, "state": prior["state"], "mode": prior["mode"]})
 
             in_range = conn.execute(
-                """SELECT ts, state FROM relay_events
+                """SELECT ts, state, mode FROM relay_events
                    WHERE relay_id=? AND ts>=? ORDER BY ts""",
                 (rid, since),
             ).fetchall()
-            events.extend({"ts": r["ts"], "state": r["state"]} for r in in_range)
+            events.extend(
+                {"ts": r["ts"], "state": r["state"], "mode": r["mode"]}
+                for r in in_range
+            )
             relays_out[key] = events
 
     return {"sensors": sensors, "relays": relays_out}

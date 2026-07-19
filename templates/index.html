@@ -42,6 +42,14 @@
        <button class="btn btn-sm" onclick="enableAutoMode()">Вернуть автоматический</button>
      </div>
 
+     <div id="climate-alert-banner" class="climate-alert-banner" style="display:none">
+       <span class="manual-banner-icon">🚨</span>
+       <div>
+         <strong>Предупреждение климата</strong>
+         <div id="climate-alert-list" class="manual-banner-desc"></div>
+       </div>
+     </div>
+
      <div class="auto-toggle-bar">
        <span class="auto-toggle-label">Автоматика</span>
        <label class="switch">
@@ -189,7 +197,7 @@
         <label>Минимальная пауза между переключениями (сек)</label>
         <input type="number" id="s-hum-min-switch" min="0" max="3600" step="1">
       </div>
-      <p class="hint">Ниже нижней границы увлажнитель включается, выше верхней выключается. Внутри зоны гистерезиса состояние сохраняется.</p>
+      <p id="s-hum-bounds" class="hint">Ниже нижней границы увлажнитель включается, выше верхней выключается.</p>
       <div class="form-actions">
         <button class="btn" onclick="saveSettings()">Сохранить</button>
       </div>
@@ -198,7 +206,7 @@
     <div class="card">
       <div class="card-title">Климатическая вентиляция</div>
       <div class="form-group checkbox-group">
-        <label><input type="checkbox" id="s-cv-enabled"> Управлять вентиляцией по температуре</label>
+        <label><input type="checkbox" id="s-cv-enabled"> Управлять вентиляцией по температуре и влажности</label>
       </div>
       <div class="form-group">
         <label>Реле вентиляции</label>
@@ -213,10 +221,26 @@
         <input type="number" id="s-cv-temp-hysteresis" min="0" max="20" step="0.1">
       </div>
       <div class="form-group">
+        <label>Включить вытяжку при влажности (%)</label>
+        <input type="number" id="s-cv-max-humidity" min="0" max="100" step="0.1">
+      </div>
+      <div class="form-group">
+        <label>Гистерезис влажности вытяжки (%)</label>
+        <input type="number" id="s-cv-humidity-hysteresis" min="0.1" max="30" step="0.1">
+      </div>
+      <div class="form-group">
+        <label>Защитный минимум температуры (°C)</label>
+        <input type="number" id="s-cv-min-temperature" min="0" max="40" step="0.1">
+      </div>
+      <div class="form-group">
+        <label>Порог предупреждения о перегреве (°C)</label>
+        <input type="number" id="s-cv-max-temperature" min="1" max="60" step="0.1">
+      </div>
+      <div class="form-group">
         <label>Минимальная пауза между переключениями (сек)</label>
         <input type="number" id="s-cv-min-switch" min="0" max="3600" step="1">
       </div>
-      <p class="hint">При превышении верхней границы (цель + гистерезис/2) вентиляция включается. Ниже нижней границы (цель - гистерезис/2) выключается. Внутри зоны гистерезиса состояние сохраняется.</p>
+      <p id="s-cv-bounds" class="hint"></p>
       <div class="form-actions">
         <button class="btn" onclick="saveSettings()">Сохранить</button>
       </div>
@@ -234,6 +258,10 @@
       <div class="form-group">
         <label>Интервал обновления (сек)</label>
         <input type="number" id="s-sens-interval" min="5" max="3600" style="width:100px">
+      </div>
+      <div class="form-group">
+        <label>Таймаут отказа датчика (сек)</label>
+        <input type="number" id="s-sens-stale" min="2" max="3600" style="width:100px">
       </div>
       <div class="form-actions">
         <button class="btn" onclick="saveSettings()">Сохранить</button>

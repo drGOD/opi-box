@@ -36,7 +36,14 @@ async function apiFetch(url, opts = {}) {
     headers: { 'Content-Type': 'application/json' },
     ...opts,
   });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  if (!r.ok) {
+    let message = `HTTP ${r.status}`;
+    try {
+      const payload = await r.json();
+      if (payload.error) message = payload.error;
+    } catch (_) {}
+    throw new Error(message);
+  }
   return r.json();
 }
 
@@ -60,6 +67,7 @@ async function pollStatus() {
     statusData = await apiFetch('/api/status');
     renderRelayCards(statusData.relays);
     renderAutoModeBanner(statusData);
+    renderClimateAlerts(statusData.alarms || []);
     document.getElementById('system-time').textContent = statusData.time;
     const dot = document.getElementById('conn-dot');
     dot.className = 'dot dot-on';
@@ -104,9 +112,25 @@ function renderAutoModeBanner(status) {
     if (r.humidity_controlled && r.humidity_expected != null && r.state !== r.humidity_expected) {
       parts.push(`${r.name}: по влажности ${r.humidity_expected ? 'ВКЛ' : 'ВЫКЛ'}, сейчас ${r.state ? 'ВКЛ' : 'ВЫКЛ'}`);
     }
+    if (r.climate_controlled && r.climate_expected != null && r.state !== r.climate_expected) {
+      parts.push(`${r.name}: климат требует ${r.climate_expected ? 'ВКЛ' : 'ВЫКЛ'}, сейчас ${r.state ? 'ВКЛ' : 'ВЫКЛ'}`);
+    }
   });
   document.getElementById('manual-banner-desc').textContent =
     parts.length ? parts.join(' · ') : 'Реле управляются вручную';
+}
+
+function renderClimateAlerts(alarms) {
+  const banner = document.getElementById('climate-alert-banner');
+  const list = document.getElementById('climate-alert-list');
+  if (!alarms.length) {
+    banner.style.display = 'none';
+    list.textContent = '';
+    return;
+  }
+  banner.style.display = '';
+  banner.classList.toggle('warning', !alarms.some(a => a.severity === 'critical'));
+  list.textContent = alarms.map(a => a.message).join(' · ');
 }
 
 async function enableAutoMode() {
@@ -319,7 +343,18 @@ function renderRelayCards(relays) {
     const on = relay.state;
     card.className = `card relay-card ${on ? 'on' : 'off'}`;
     card.querySelector('.relay-state').textContent = on ? 'ВКЛ' : 'ВЫКЛ';
-    card.querySelector('.relay-mode-note').textContent = relay.humidity_controlled ? 'Авто: по влажности' : '';
+    let modeNote = relay.humidity_controlled ? 'Авто: влажность' : '';
+    if (relay.climate_controlled) {
+      const labels = {
+        temperature: 'температура',
+        humidity: 'влажность',
+        sensor_failsafe: 'аварийный режим',
+        sensor_initializing: 'ожидание датчика',
+      };
+      const reasons = (relay.climate_reasons || []).map(reason => labels[reason] || reason);
+      modeNote = reasons.length ? `Авто: ${reasons.join(' + ')}` : 'Авто: климат в норме';
+    }
+    card.querySelector('.relay-mode-note').textContent = modeNote;
   });
 }
 
@@ -587,14 +622,20 @@ async function loadSettings() {
     document.getElementById('s-sens-enabled').checked  = sc.enabled ?? true;
     document.getElementById('s-sens-bus').value        = sc.i2c_bus ?? 2;
     document.getElementById('s-sens-interval').value   = sc.read_interval_seconds ?? 30;
+    document.getElementById('s-sens-stale').value      = sc.stale_after_seconds ?? 60;
     renderRelaySettings(s.relays ?? []);
     renderHumidityRelayOptions(s.relays ?? [], hc.relay_id ?? 3);
     const cv = s.climate_ventilation ?? {};
     document.getElementById('s-cv-enabled').checked    = cv.enabled ?? false;
     document.getElementById('s-cv-target-temp').value   = cv.target_temperature ?? 25.0;
     document.getElementById('s-cv-temp-hysteresis').value = cv.temperature_hysteresis ?? 4.0;
+    document.getElementById('s-cv-max-humidity').value = cv.max_humidity ?? 60.0;
+    document.getElementById('s-cv-humidity-hysteresis').value = cv.humidity_hysteresis ?? 5.0;
+    document.getElementById('s-cv-min-temperature').value = cv.min_temperature ?? 18.0;
+    document.getElementById('s-cv-max-temperature').value = cv.max_temperature ?? 35.0;
     document.getElementById('s-cv-min-switch').value   = cv.min_switch_interval_seconds ?? 180;
     renderClimateVentRelayOptions(s.relays ?? [], cv.relay_id ?? 2);
+    renderControlBounds();
   } catch {
     showToast('Ошибка загрузки настроек', 'err');
   }
@@ -679,20 +720,25 @@ async function saveSettings() {
       enabled:               document.getElementById('s-sens-enabled').checked,
       i2c_bus:               +document.getElementById('s-sens-bus').value,
       read_interval_seconds: +document.getElementById('s-sens-interval').value,
+      stale_after_seconds:    +document.getElementById('s-sens-stale').value,
     },
     climate_ventilation: {
       enabled:                     document.getElementById('s-cv-enabled').checked,
       relay_id:                    +document.getElementById('s-cv-relay').value,
       target_temperature:           +document.getElementById('s-cv-target-temp').value,
       temperature_hysteresis:       +document.getElementById('s-cv-temp-hysteresis').value,
+      max_humidity:                  +document.getElementById('s-cv-max-humidity').value,
+      humidity_hysteresis:           +document.getElementById('s-cv-humidity-hysteresis').value,
+      min_temperature:               +document.getElementById('s-cv-min-temperature').value,
+      max_temperature:               +document.getElementById('s-cv-max-temperature').value,
       min_switch_interval_seconds: +document.getElementById('s-cv-min-switch').value,
     },
   };
   try {
     await apiFetch('/api/settings', { method: 'POST', body: JSON.stringify(payload) });
     showToast('Настройки сохранены');
-  } catch {
-    showToast('Ошибка сохранения', 'err');
+  } catch (error) {
+    showToast(error.message || 'Ошибка сохранения', 'err');
   }
 }
 
@@ -709,3 +755,26 @@ function renderClimateVentRelayOptions(relays, selectedId) {
     select.value = String(selectedId);
   }
 }
+
+function renderControlBounds() {
+  const humTarget = +document.getElementById('s-hum-target').value;
+  const humBand = +document.getElementById('s-hum-band').value;
+  const humHint = document.getElementById('s-hum-bounds');
+  if (humHint) {
+    humHint.textContent = `Увлажнитель: ВКЛ ≤ ${(humTarget - humBand / 2).toFixed(1)}%, ВЫКЛ ≥ ${(humTarget + humBand / 2).toFixed(1)}%.`;
+  }
+
+  const tempTarget = +document.getElementById('s-cv-target-temp').value;
+  const tempBand = +document.getElementById('s-cv-temp-hysteresis').value;
+  const maxHumidity = +document.getElementById('s-cv-max-humidity').value;
+  const humidityBand = +document.getElementById('s-cv-humidity-hysteresis').value;
+  const ventHint = document.getElementById('s-cv-bounds');
+  if (ventHint) {
+    ventHint.textContent = `Вытяжка: температура ВКЛ ≥ ${(tempTarget + tempBand / 2).toFixed(1)}°C / ВЫКЛ ≤ ${(tempTarget - tempBand / 2).toFixed(1)}°C; влажность ВКЛ ≥ ${maxHumidity.toFixed(1)}% / ВЫКЛ ≤ ${(maxHumidity - humidityBand).toFixed(1)}%.`;
+  }
+}
+
+[
+  's-hum-target', 's-hum-band', 's-cv-target-temp', 's-cv-temp-hysteresis',
+  's-cv-max-humidity', 's-cv-humidity-hysteresis',
+].forEach(id => document.getElementById(id)?.addEventListener('input', renderControlBounds));

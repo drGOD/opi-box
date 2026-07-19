@@ -42,6 +42,7 @@ class SensorHubTests(unittest.TestCase):
         self.assertEqual(hub.latest["temperature"], 23.4)
         self.assertEqual(hub.latest["air_humidity"], 55.5)
         self.assertEqual(readings[0]["temperature"], 23.4)
+        self.assertIsNotNone(hub.last_success_at)
 
     def test_read_once_handles_sensor_failure_without_callback(self):
         hub = SensorHub({"sensors": {}}, on_reading=lambda data: self.fail("callback should not run"))
@@ -54,6 +55,23 @@ class SensorHubTests(unittest.TestCase):
         hub._read_once()
 
         self.assertEqual(hub.latest, {})
+        self.assertIsNone(hub.last_success_at)
+
+    def test_failed_read_preserves_last_successful_sample(self):
+        hub = SensorHub({"sensors": {}}, on_reading=None)
+        hub._aht = FakeAHT()
+        hub._read_once()
+        last_success = hub.last_success_at
+
+        class BrokenAHT:
+            def read(self):
+                raise RuntimeError("broken")
+
+        hub._aht = BrokenAHT()
+        hub._read_once()
+
+        self.assertEqual(hub.latest["temperature"], 23.4)
+        self.assertEqual(hub.last_success_at, last_success)
 
     def test_available_and_close_reflect_current_hardware(self):
         hub = SensorHub({"sensors": {}}, on_reading=None)
