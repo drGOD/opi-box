@@ -4,6 +4,8 @@ import time
 from datetime import datetime
 from typing import Callable, Optional
 
+from systemd_watchdog import notify_watchdog
+
 logger = logging.getLogger(__name__)
 
 
@@ -18,6 +20,7 @@ class GrowboxScheduler:
         mode: dict,
         sensor_hub=None,
         relay_notify: Optional[Callable] = None,
+        watchdog_notify: Optional[Callable[[], bool]] = None,
     ):
         self.relays = relays
         self.camera = camera
@@ -25,6 +28,7 @@ class GrowboxScheduler:
         self.mode = mode
         self.sensor_hub = sensor_hub
         self.relay_notify = relay_notify or (lambda relay, event_mode="auto": None)
+        self.watchdog_notify = watchdog_notify or notify_watchdog
         self._running = False
         self._thread = None
         self._started_at = time.time()
@@ -61,6 +65,10 @@ class GrowboxScheduler:
                 self._tick_timelapse()
             self._check_climate_control(now)
             self._resync_relay_states(now)
+            try:
+                self.watchdog_notify()
+            except OSError:
+                logger.exception("Failed to notify systemd watchdog")
             time.sleep(20)
 
     def _notify(self, relay, event_mode: str) -> None:

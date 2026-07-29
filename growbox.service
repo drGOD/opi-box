@@ -8,7 +8,9 @@ User=root
 WorkingDirectory=/opt/growbox
 ExecStart=/opt/growbox/venv/bin/python app.py
 Restart=on-failure
-RestartSec=10
+RestartSec=5
+NotifyAccess=main
+WatchdogSec=60
 StandardOutput=journal
 StandardError=journal
 

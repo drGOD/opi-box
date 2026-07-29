@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from scheduler import GrowboxScheduler
 
@@ -47,6 +48,23 @@ class Now:
 
 
 class SchedulerTests(unittest.TestCase):
+    def test_loop_notifies_watchdog_after_successful_cycle(self):
+        notifications = []
+        scheduler = GrowboxScheduler(
+            relays={},
+            camera=FakeCamera(),
+            config={},
+            mode={"auto": True},
+            sensor_hub=FakeSensorHub(),
+            watchdog_notify=lambda: notifications.append(True),
+        )
+        scheduler._running = True
+
+        with patch("scheduler.time.sleep", side_effect=lambda _seconds: scheduler.stop()):
+            scheduler._loop()
+
+        self.assertEqual(notifications, [True])
+
     def test_schedule_switches_relay_on_at_matching_time(self):
         relay = FakeRelay(state=False)
         scheduler = GrowboxScheduler(
